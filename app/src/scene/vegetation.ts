@@ -84,9 +84,9 @@ const vegDummy = new THREE.Object3D();
 
 /**
  * Rebuilds every blade's matrix from its baked base placement plus the current
- * season density/height (依頼A') and time-field sway (依頼B) — same pattern as
- * tree.ts's `updateCanopyInstances`, kept in lockstep so both layers visibly nod to
- * the same field.
+ * season density/height (依頼A') and time-field sway (依頼B) — kept in lockstep
+ * with the tree's own sway (see tree.ts's `updateTreeAnimation`) so both layers
+ * visibly nod to the same field.
  */
 export function updateVegetationInstances(
   mesh: THREE.InstancedMesh,

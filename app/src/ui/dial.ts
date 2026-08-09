@@ -28,8 +28,7 @@ const AUTO_LOOP_SECONDS = 72;
  */
 const WEDGE_COLORS: Record<SeasonId, string> = {
   winter: '#a9c9e0',
-  springBloom: '#f2b8cf',
-  springFall: '#e893b3',
+  spring: '#f2b8cf',
   summer: '#8fd16a',
   autumn: '#e2963f',
 };

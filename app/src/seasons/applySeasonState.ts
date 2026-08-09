@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Composition } from '../scene/composition';
-import { setCanopySeasonState } from '../scene/tree';
+import { setCanopySeasonState, setCanopyColor } from '../scene/tree';
 import { setVegetationSeasonState } from '../scene/vegetation';
 import { setFlowerSeasonState } from '../scene/flowers';
 import { setSheddingSeasonState } from '../scene/sheddingParticles';
@@ -14,8 +14,7 @@ const sunOffset = new THREE.Vector3();
  *  bloom (matching the reference art's soft high-key sky), thinning out by autumn. */
 const CLOUD_DENSITY: Record<SeasonId, number> = {
   winter: 0.25,
-  springBloom: 0.6,
-  springFall: 0.5,
+  spring: 0.55,
   summer: 0.7,
   autumn: 0.35,
 };
@@ -30,7 +29,7 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
   const { tree, vegetation, flowers, shedding, lake, ground, mountains, sky, lights, scene } =
     composition;
 
-  tree.canopyMaterial.color.copy(params.canopyColor);
+  setCanopyColor(tree, params.canopyColor);
   setCanopySeasonState(tree, params.canopyDensity, params.canopyScale);
 
   vegetation.material.color.copy(params.vegetationColor);

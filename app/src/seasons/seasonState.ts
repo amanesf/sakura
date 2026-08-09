@@ -1,22 +1,16 @@
 import * as THREE from 'three';
 
 /**
- * The 5 scenes from season-transition-animation.md §2 (in loop order, §2 "ループ順"),
- * with autumn's colorful and shedding stages consolidated into one scene per user
- * direction rather than the doc's original 6-scene split. springFall stays a
- * separate "散り際" scene from springBloom — this consolidation is autumn-only.
- * `autumn` shows both a colored canopy and active leaf-shedding at once (see its
- * sheddingSensitivity below), rather than picking one or the other.
+ * The 4 scenes from season-transition-animation.md §2 (in loop order, §2
+ * "ループ順"), with both spring's and autumn's "peak" and "shedding" stages each
+ * consolidated into one scene per user direction, rather than the doc's original
+ * 6-scene split. `spring` and `autumn` each show a colored canopy *and* active
+ * petal/leaf shedding at once (see sheddingSensitivity below), rather than picking
+ * "just bloomed/colored" vs. "already falling" as separate dial notches.
  */
-export type SeasonId = 'winter' | 'springBloom' | 'springFall' | 'summer' | 'autumn';
+export type SeasonId = 'winter' | 'spring' | 'summer' | 'autumn';
 
-export const SEASON_ORDER: readonly SeasonId[] = [
-  'winter',
-  'springBloom',
-  'springFall',
-  'summer',
-  'autumn',
-];
+export const SEASON_ORDER: readonly SeasonId[] = ['winter', 'spring', 'summer', 'autumn'];
 
 export interface SeasonVisualParams {
   id: SeasonId;
@@ -124,7 +118,7 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
   winter: {
     id: 'winter',
     label: '冬（ベース）',
-    canopyDensity: 0.04,
+    canopyDensity: 0,
     canopyScale: 0.55,
     canopyColor: '#8a8378',
     groundColor: '#dfe8ee',
@@ -153,69 +147,40 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     hemiIntensity: 0.7,
     toneMappingExposure: 1.0,
   },
-  springBloom: {
-    id: 'springBloom',
-    label: '春・満開',
-    canopyDensity: 0.9,
-    canopyScale: 0.95,
-    canopyColor: '#f3b6c9',
-    groundColor: '#8fbf6a',
-    farShoreColor: '#7fae5c',
-    vegetationColor: '#d9c25a',
-    vegetationDensity: 0.95,
+  spring: {
+    // Consolidates the former springBloom/springFall pair into one scene, the same
+    // way autumn below does: a mostly-full pink canopy with petals actively
+    // shedding at the same time, rather than a separate "just bloomed" notch.
+    id: 'spring',
+    label: '春',
+    canopyDensity: 0.78,
+    canopyScale: 0.92,
+    canopyColor: '#f1aec4',
+    groundColor: '#a6b17a',
+    farShoreColor: '#82aa5f',
+    vegetationColor: '#d9b67c',
+    vegetationDensity: 0.92,
     vegetationHeight: 0.35,
-    flowerDensity: 0.9,
-    sheddingColor: '#f6c3d6',
-    sheddingSensitivity: 0,
-    lakeTint: '#bcd6e0',
-    skyTop: '#5fa8ea',
-    skyHorizon: '#cfe6ee',
-    skyBottom: '#dcead2',
-    mountainNear: '#7d9a8c',
-    mountainFar: '#9fb7bd',
-    fogColor: '#eef3ea',
-    fogNear: 30,
-    fogFar: 115,
-    sunColor: '#fff2df',
-    sunIntensity: 2.2,
-    sunElevationDeg: 45,
-    sunAzimuthDeg: -40,
-    hemiSky: '#bfe2ff',
-    hemiGround: '#6f8f5a',
-    hemiIntensity: 0.9,
-    toneMappingExposure: 1.08,
-  },
-  springFall: {
-    id: 'springFall',
-    label: '春・桜吹雪',
-    canopyDensity: 0.5,
-    canopyScale: 0.85,
-    canopyColor: '#f0a8c0',
-    groundColor: '#c8a2ac',
-    farShoreColor: '#84a563',
-    vegetationColor: '#d9a9ab',
-    vegetationDensity: 0.9,
-    vegetationHeight: 0.35,
-    flowerDensity: 0.75,
-    sheddingColor: '#f4a3c4',
+    flowerDensity: 0.85,
+    sheddingColor: '#f5b3cd',
     sheddingSensitivity: 4.6,
-    lakeTint: '#c3d8df',
-    skyTop: '#8fc7f2',
-    skyHorizon: '#fbeef0',
-    skyBottom: '#d7e6d0',
-    mountainNear: '#7f9a72',
-    mountainFar: '#a9c0be',
-    fogColor: '#eef0ea',
-    fogNear: 24,
-    fogFar: 80,
-    sunColor: '#fff0e0',
-    sunIntensity: 2.0,
-    sunElevationDeg: 42,
-    sunAzimuthDeg: -38,
+    lakeTint: '#bfd7df',
+    skyTop: '#77b8ee',
+    skyHorizon: '#e0eaef',
+    skyBottom: '#d9e8d1',
+    mountainNear: '#7e9a7d',
+    mountainFar: '#a4bcbb',
+    fogColor: '#eef1ea',
+    fogNear: 27,
+    fogFar: 98,
+    sunColor: '#fff1df',
+    sunIntensity: 2.1,
+    sunElevationDeg: 44,
+    sunAzimuthDeg: -39,
     hemiSky: '#bfe2ff',
     hemiGround: '#6f8f5a',
-    hemiIntensity: 0.88,
-    toneMappingExposure: 1.06,
+    hemiIntensity: 0.89,
+    toneMappingExposure: 1.07,
   },
   summer: {
     id: 'summer',

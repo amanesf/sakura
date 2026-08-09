@@ -9,11 +9,10 @@ import { SEASON_ORDER, type SeasonId } from './seasonState';
  */
 const SEASON_WEIGHTS: Record<SeasonId, number> = {
   winter: 0.7,
-  springBloom: 1.5,
-  springFall: 1.3,
+  // Both carry roughly the combined weight of the two scenes they each replaced
+  // (peak color + shedding), so neither is rushed relative to the old two-scene arcs.
+  spring: 1.9,
   summer: 0.9,
-  // Carries roughly the combined weight of the two scenes it replaced (color +
-  // shedding), so autumn isn't rushed relative to spring's two-scene arc.
   autumn: 1.7,
 };
 
