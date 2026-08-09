@@ -61,7 +61,6 @@ export function createSheddingParticles(seed = 4021): SheddingHandle {
   });
 
   const mesh = new THREE.InstancedMesh(petalGeometry, material, INSTANCE_COUNT);
-  mesh.castShadow = false;
 
   const instances: SheddingInstanceBase[] = [];
   for (let i = 0; i < INSTANCE_COUNT; i++) {

@@ -75,8 +75,8 @@ export function createLake(radius = 40): LakeHandle {
   const geometry = new THREE.CircleGeometry(radius, 64);
   const mesh = new Reflector(geometry, {
     color: new THREE.Color('#9fb9c2'),
-    textureWidth: 1024,
-    textureHeight: 1024,
+    textureWidth: 512,
+    textureHeight: 512,
     clipBias: 0.003,
     shader: RIPPLE_SHADER,
   });

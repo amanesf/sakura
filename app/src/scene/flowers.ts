@@ -37,7 +37,6 @@ export function createFlowers(seed = 512): FlowerHandle {
   const headGeometry = new THREE.IcosahedronGeometry(0.05, 0);
   const material = new THREE.MeshStandardMaterial({ roughness: 0.6 });
   const mesh = new THREE.InstancedMesh(headGeometry, material, INSTANCE_COUNT);
-  mesh.castShadow = false;
 
   const instances: FlowerInstanceBase[] = [];
   const color = new THREE.Color();

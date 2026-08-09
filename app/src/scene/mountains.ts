@@ -94,7 +94,6 @@ export function createMountains(seed = 20260809): MountainsHandle {
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.z = cfg.z;
-    mesh.receiveShadow = false;
     group.add(mesh);
     layers.push({ mesh, material });
   }

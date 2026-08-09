@@ -61,17 +61,9 @@ export function createComposition(): Composition {
   const shedding = createSheddingParticles();
   scene.add(shedding.mesh);
 
+  // No shadow casting here — see core/renderer.ts on why shadowMap is disabled.
   const sun = new THREE.DirectionalLight('#fff3e0', 2.4);
   sun.position.set(-8, 14, 6);
-  sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 40;
-  sun.shadow.camera.left = -12;
-  sun.shadow.camera.right = 12;
-  sun.shadow.camera.top = 12;
-  sun.shadow.camera.bottom = -12;
-  sun.shadow.bias = -0.0015;
   scene.add(sun, sun.target);
 
   const hemi = new THREE.HemisphereLight('#bfe2ff', '#5b6d55', 0.85);

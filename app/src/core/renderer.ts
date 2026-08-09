@@ -16,8 +16,12 @@ export function createRenderer(canvasHost: HTMLElement): THREE.WebGLRenderer {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // Shadow mapping is off: a directional-light shadow camera covering thousands of
+  // InstancedMesh shadow casters (canopy, canopy fill) has crashed the WebGL
+  // context on real mobile hardware (context-loss "Aw, Snap" page) even though it
+  // renders fine in desktop headless testing. Not worth the risk for a detail
+  // this subtle.
+  renderer.shadowMap.enabled = false;
   canvasHost.appendChild(renderer.domElement);
   return renderer;
 }

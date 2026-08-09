@@ -56,7 +56,6 @@ export function createGround(): GroundHandle {
   const nearShore = new THREE.Mesh(nearShoreGeometry, nearShoreMaterial);
   nearShore.rotation.x = -Math.PI / 2;
   nearShore.position.set(0, 0.03, -2);
-  nearShore.receiveShadow = true;
 
   const farShoreGeometry = new THREE.PlaneGeometry(60, 6);
   const farShoreMaterial = new THREE.MeshStandardMaterial({
@@ -66,7 +65,6 @@ export function createGround(): GroundHandle {
   const farShore = new THREE.Mesh(farShoreGeometry, farShoreMaterial);
   farShore.rotation.x = -Math.PI / 2;
   farShore.position.set(0, 0.02, -19);
-  farShore.receiveShadow = true;
 
   return { nearShore, nearShoreMaterial, farShore, farShoreMaterial };
 }

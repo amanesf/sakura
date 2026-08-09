@@ -198,8 +198,6 @@ export function createTree(seed = 20260809): TreeHandle {
     );
   };
   const trunkMesh = new THREE.Mesh(trunkGeometry, trunkMaterial);
-  trunkMesh.castShadow = true;
-  trunkMesh.receiveShadow = true;
 
   const canopyGeometry = new THREE.IcosahedronGeometry(0.185, 2);
   const canopyMaterial = new THREE.MeshStandardMaterial({
@@ -228,7 +226,6 @@ export function createTree(seed = 20260809): TreeHandle {
     canopyMaterial,
     tips.length * LEAVES_PER_TIP,
   );
-  canopyMesh.castShadow = true;
 
   // A single solid "fill" blob behind the instanced clusters, same material (so it
   // always matches the current season color automatically). The hard instance
@@ -247,7 +244,6 @@ export function createTree(seed = 20260809): TreeHandle {
     canopyMaterial,
   );
   canopyFillMesh.position.copy(canopyCenter);
-  canopyFillMesh.castShadow = true;
 
   const shadeColor = new THREE.Color();
   const canopyInstances: CanopyInstanceBase[] = [];

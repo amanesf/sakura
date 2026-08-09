@@ -50,8 +50,6 @@ export function createVegetation(seed = 71): VegetationHandle {
   });
 
   const mesh = new THREE.InstancedMesh(bladeGeometry, material, INSTANCE_COUNT);
-  mesh.castShadow = false;
-  mesh.receiveShadow = false;
 
   const instances: VegetationInstanceBase[] = [];
   let built = 0;
