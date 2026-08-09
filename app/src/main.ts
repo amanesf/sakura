@@ -9,6 +9,7 @@ import { sampleTimeField } from './core/timeField';
 import { updateTreeAnimation } from './scene/tree';
 import { updateVegetationAnimation } from './scene/vegetation';
 import { updateLake } from './scene/lake';
+import { TimeMachineDial } from './ui/dial';
 
 const appHost = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -19,27 +20,31 @@ const composition = createComposition();
 watchResize(renderer, camera);
 
 /**
- * Temporary linear auto-cycle so the season system (依頼A') is visible without a
- * UI. 依頼C replaces this with the real time-machine dial: manual scrub, non-linear
- * per-scene pacing (proposal.md §3 "非線形な時間軸"), and idle auto-advance driven by
- * the light-wave transition (依頼D) instead of a plain crossfade.
- *
- * `?dial=<0..6>` freezes on one keyframe for deterministic review screenshots
- * (agent-workflow-policy.md §6) instead of racing the wall clock.
+ * `?dial=<0..6>` freezes on one keyframe and hides the interactive dial, for
+ * deterministic review screenshots (agent-workflow-policy.md §6) instead of racing
+ * the wall clock or a pointer.
  */
-const SECONDS_PER_SCENE = 8;
-const clock = new THREE.Clock();
 const frozenDial = new URLSearchParams(window.location.search).get('dial');
 const frozenDialValue = frozenDial !== null ? Number(frozenDial) : null;
 
+const dial = frozenDialValue === null ? new TimeMachineDial() : null;
+if (dial) appHost.appendChild(dial.element);
+
+const clock = new THREE.Clock();
+let elapsed = 0;
+
 function renderLoop() {
   requestAnimationFrame(renderLoop);
-  const elapsed = clock.getElapsedTime();
-  const dialPosition = frozenDialValue ?? elapsed / SECONDS_PER_SCENE;
+  const dt = clock.getDelta();
+  elapsed += dt;
+
+  dial?.advance(dt);
+  const dialPosition = frozenDialValue ?? dial!.dialPosition;
 
   const params = sampleSeasonState(dialPosition);
   applySeasonState(composition, params);
   renderer.toneMappingExposure = params.toneMappingExposure;
+  dial?.setLabel(params.label);
 
   // Time field (依頼B, §4): one ambient strength value driving every layer's sway.
   const { strength: fieldStrength } = sampleTimeField(elapsed);
