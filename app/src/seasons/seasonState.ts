@@ -153,7 +153,12 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // shedding at the same time, rather than a separate "just bloomed" notch.
     id: 'spring',
     label: '春',
-    canopyDensity: 0.78,
+    // Was 0.78 back when the canopy was thousands of tiny painted dabs (thinning
+    // just softened the fine texture). With ~60 discrete generated clusters
+    // (tree.ts's cluster system) that same fraction leaves visible gaps showing
+    // bare branch through the canopy — most clusters need to stay lit for a full
+    // bloom, with summer's 1.0 still reading fuller/denser by comparison.
+    canopyDensity: 0.93,
     canopyScale: 0.92,
     canopyColor: '#f1aec4',
     groundColor: '#a6b17a',
@@ -221,7 +226,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // "just turned" vs. "already bare" as separate dial notches.
     id: 'autumn',
     label: '秋',
-    canopyDensity: 0.78,
+    // See spring's canopyDensity comment — same reasoning.
+    canopyDensity: 0.9,
     canopyScale: 0.95,
     canopyColor: '#d0651f',
     groundColor: '#ad7936',

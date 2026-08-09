@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip. Look specifically at the SECOND panel from the left (spring): a cherry tree in full bloom with soft pastel pink blossoms.
+
+Generate ONE isolated cherry blossom cluster (a dense, fully-bloomed clump of sakura flowers on a short twig, mostly open flowers, as if cropped directly from that spring tree's canopy), matching the exact painterly art style, soft lighting, and pastel pink color palette of that spring panel.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the cluster itself.
+- One cohesive rounded cluster of blossoms and small twigs, roughly circular/blob silhouette, soft natural edges with some petals/twigs sticking out irregularly.
+- Same brush/painterly texture and color grading as the reference (soft pastel pink, warm highlights, cool shadow).
+- Square aspect ratio, cluster centered and filling most of the frame with some padding.

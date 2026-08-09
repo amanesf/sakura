@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip. Look specifically at the FOURTH (rightmost) panel (autumn): a tree with deep red and orange autumn foliage at sunset.
+
+Generate ONE isolated cluster of autumn leaves, looser/sparser than a fully-packed cluster, with a mix of red, orange and a few remaining green leaves, visible thin twigs, as if cropped directly from that autumn tree's canopy. Match the exact painterly art style, warm sunset lighting, and rich color palette of that autumn panel.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the cluster itself.
+- One cohesive rounded cluster of leaves and small twigs, roughly circular/blob silhouette, soft natural edges with some leaves/twigs sticking out irregularly.
+- Same brush/painterly texture and color grading as the reference (mixed red/orange/green, warm highlights, cool shadow).
+- Square aspect ratio, cluster centered and filling most of the frame with some padding.

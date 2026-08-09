@@ -7,7 +7,6 @@ import { createTree, type TreeHandle } from './tree';
 import { createVegetation, type VegetationHandle } from './vegetation';
 import { createSheddingParticles, type SheddingHandle } from './sheddingParticles';
 import { createFlowers, type FlowerHandle } from './flowers';
-import { SEASON_ORDER, SEASON_KEYFRAMES } from '../seasons/seasonState';
 
 export interface Lights {
   sun: THREE.DirectionalLight;
@@ -50,10 +49,7 @@ export function createComposition(): Composition {
   const ground = createGround();
   scene.add(ground.nearShore, ground.farShore);
 
-  // Pre-bake one canopy texture per distinct season density so season switches
-  // (依頼A') only ever swap a texture reference — see tree.ts's createTree doc.
-  const canopyDensityLevels = SEASON_ORDER.map((id) => SEASON_KEYFRAMES[id].canopyDensity);
-  const tree = createTree(undefined, canopyDensityLevels);
+  const tree = createTree();
   scene.add(tree.group);
 
   const vegetation = createVegetation();

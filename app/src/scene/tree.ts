@@ -3,31 +3,45 @@ import { mulberry32, rngRange, type Rng } from '../core/prng';
 import { CAMERA_POSITION, CAMERA_LOOK_AT } from '../core/camera';
 
 export interface TreeSeasonState {
+  seasonKey: CanopySeasonKey;
   density: number;
   scale: number;
 }
 
-export interface CanopyTextureVariant {
-  density: number;
-  texture: THREE.CanvasTexture;
+/** The three seasons that actually show a canopy — winter stays bare. */
+export type CanopySeasonKey = 'winter' | 'spring' | 'summer' | 'autumn';
+
+/** One camera-facing blossom/leaf cluster, independently swaying — see this
+ *  module's "Canopy: generated clusters" section for why this replaced both the
+ *  original live-instance approach and the later single-baked-plane approach. */
+interface CanopyCluster {
+  mesh: THREE.Mesh;
+  pivot: THREE.Group;
+  densityKey: number;
+  swayPhase: number;
+  swayFreq: number;
+  swayAmp: number;
+}
+
+interface SeasonClusterSet {
+  group: THREE.Group;
+  clusters: CanopyCluster[];
 }
 
 export interface TreeHandle {
   group: THREE.Group;
   /** The trunk/branch painting — a single camera-facing plane, baked once. Real
    *  cherry trunks barely move in wind (only the crown does), so unlike the
-   *  canopy this has no pivot of its own; sway lives entirely in canopyPivot. */
+   *  canopy this has no pivot of its own; sway lives entirely in the canopy. */
   trunkMesh: THREE.Mesh;
-  canopyMesh: THREE.Mesh;
-  canopyMaterial: THREE.MeshBasicMaterial;
-  /** Pivots the canopy for whole-mass sway (依頼B) — positioned at the branch
-   *  attachment point, not the canopy's own center, so a small rotation swings the
-   *  top further than the bottom like a real hanging mass would. */
+  /** Whole-canopy sway pivot, positioned at the branch fork — shared by every
+   *  season's cluster set so switching seasons doesn't reset the correlated sway. */
   canopyPivot: THREE.Group;
-  /** One pre-baked texture per distinct season canopy density — swapped by
-   *  `setCanopySeasonState`, never blended live (season transitions are hard-cut
-   *  under cover of 依頼D's wave, so no runtime interpolation is needed here). */
-  canopyTextures: CanopyTextureVariant[];
+  /** One cluster set per season that has a canopy at all — all built from the
+   *  same placement layout (see buildClusterPlacements) so the silhouette doesn't
+   *  jump around across a season change, only the texture set and per-cluster
+   *  visibility (density) does. */
+  seasonClusters: Record<Exclude<CanopySeasonKey, 'winter'>, SeasonClusterSet>;
   seasonState: TreeSeasonState;
 }
 
@@ -77,6 +91,7 @@ const TREE_SCALE = 1.45;
 const DEPTH_LENGTH = [0.85, 1.55, 1.05, 0.8, 0.62, 0.48, 0.38, 0.3, 0.24].map(
   (l) => l * TREE_SCALE,
 );
+const PIXELS_PER_WORLD_UNIT = 140;
 
 function angleDir(angleRad: number): THREE.Vector2 {
   return new THREE.Vector2(Math.sin(angleRad), Math.cos(angleRad));
@@ -443,117 +458,68 @@ function bakeTrunkTexture(
 }
 
 // ---------------------------------------------------------------------------
-// Canopy texture baking.
+// Canopy: generated clusters, independently swaying.
 //
-// An earlier version built the canopy from ~1000-3000 live camera-facing sprite
-// instances. Rendered live, that reads as a pile of discrete circles no matter how
-// many are added, because WebGL has to alpha-blend and depth-sort each one in real
-// time — three.js does not sort instances *within* a single InstancedMesh, so it
-// composites in creation order rather than true visibility order, and matching
-// the reference photo's continuous, hand-painted-looking blossom mass just isn't
-// achievable that way at a sane instance count.
-//
-// The fix follows from a constraint already baked into this whole project: the
-// camera never moves (season-transition-animation.md §1, "定点観測のタイムマシン").
-// A canopy that only ever needs to be seen from one fixed angle doesn't need to
-// exist in 3D at all — it can be *painted*, once, onto a single flat texture using
-// Canvas2D (which composites hundreds of soft dabs with proper anti-aliased alpha
-// blending, no sorting concerns), and mapped onto one camera-facing plane.
+// Three different techniques were tried here, in order:
+//  1. Live camera-facing sprite instances (~1000-3000 of them). Reads as a pile
+//     of discrete circles no matter how many are added — three.js does not sort
+//     instances *within* a single InstancedMesh, so overlapping alpha-blended
+//     sprites composite in creation order rather than true visibility order.
+//  2. A single Canvas2D-painted plane for the whole canopy, baked once from many
+//     small procedural "dabs". This fixed the sorting problem (nothing to sort —
+//     one plane) and, after a lot of tuning, looked reasonably painterly. But it
+//     is one rigid billboard: the *whole* canopy can only sway as one piece, and
+//     procedural dab-painting has a real ceiling on how close it reads to actual
+//     illustrated linework (individual petals, per-cluster color variety) no
+//     matter how many dabs are layered.
+//  3. This: a moderate number (see buildClusterPlacements) of individual small
+//     Mesh objects, each showing one of a handful of Gemini-generated blossom/
+//     leaf cluster images (art-source/canopy-clusters/ — generated in the
+//     reference image's own painterly style, chroma-key extracted to real alpha,
+//     used under the user's explicit direction and budget). Because each cluster
+//     is its own Object3D, three.js's ordinary transparent-object depth sort
+//     handles occlusion between them correctly (unlike approach 1), while each
+//     one can still have its own sway pivot (unlike approach 2) — solving both
+//     prior failure modes at once, plus getting genuine illustrated texture
+//     instead of a procedural approximation of it.
 // ---------------------------------------------------------------------------
 
-interface CanopyDab {
+const CANOPY_CLUSTER_URLS: Record<Exclude<CanopySeasonKey, 'winter'>, string[]> = {
+  spring: ['spring_1.png', 'spring_2.png', 'spring_3.png'],
+  summer: ['summer_1.png', 'summer_2.png', 'summer_3.png'],
+  autumn: ['autumn_1.png', 'autumn_2.png', 'autumn_3.png'],
+};
+
+const textureCache = new Map<string, THREE.Texture>();
+const textureLoader = new THREE.TextureLoader();
+
+function loadClusterTexture(fileName: string): THREE.Texture {
+  const url = `${import.meta.env.BASE_URL}textures/canopy/${fileName}`;
+  const cached = textureCache.get(url);
+  if (cached) return cached;
+  const texture = textureLoader.load(url);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  textureCache.set(url, texture);
+  return texture;
+}
+
+interface ClusterPlacement {
   u: number;
   v: number;
   radius: number;
   densityKey: number;
-  tierIndex: number;
-  rotation: number;
-  /** Solid opaque base-fill dabs, drawn first and at full alpha (see
-   *  bakeCanopyTexture) — without them, gaps between the semi-transparent
-   *  textured dabs let the black trunk show through, and alpha-blending a light
-   *  color over black darkens/muddies it. A textured dab only ever refines what's
-   *  already solid; it never has to be the only thing standing between "canopy"
-   *  and bare canvas. */
-  isBase: boolean;
-}
-
-// Brightness levels drive which pre-baked sprite a dab uses; BRIGHTNESS_TIERS is
-// only the numeric ladder `tierForBrightness` snaps to. COLOR_TIERS is the actual
-// paint at each level — not pure grayscale. A cool, slightly purple-tinted shadow
-// through to a warm near-white highlight, so once a season's canopyColor multiplies
-// this texture (setCanopyColor), the shadow side comes out desaturated/cooler and
-// the lit side warmer, instead of every tier just being the same hue at a different
-// brightness. The same "one consistent light direction" idea as the trunk's
-// source-atop gradient, expressed as paint instead of a lighting shader.
-// A wide, dark shadow tier reintroduced the exact "muddy dark maroon" problem
-// that going unlit was supposed to fix: multiplying a texture value against a
-// moderately saturated season color crushes whichever channel is weakest in that
-// color (pink's green, autumn's blue, ...) much harder than the others, so a
-// "shadow" tier at 0.55-0.6 comes out desaturated and muddy rather than a
-// believably darker version of the same hue. Working backward from pink (the
-// worst case — its green channel is the most unbalanced) to a result that still
-// reads as pink rather than mauve put the floor around 0.78, not the ~0.55 a
-// real light/shadow contrast would suggest — so the tier ladder here is narrow
-// and bright on purpose, prioritizing "still looks like the season's color" over
-// dramatic shading range.
-const BRIGHTNESS_TIERS = [0.78, 0.85, 0.91, 0.96, 1.0];
-const COLOR_TIERS = ['#c0bac8', '#d4d0ce', '#e6e3d9', '#f3eede', '#fff8ec'];
-const PIXELS_PER_WORLD_UNIT = 140;
-
-/** A dab sprite is a small cluster of 3-4 overlapping soft lobes rather than one
- *  perfect circle — stamped (with a random rotation per dab, see bakeCanopyTexture)
- *  it reads as an irregular petal/blossom cluster instead of a uniform dot, which is
- *  what actually sells "painted flowers" over "pile of circles" at this scale. */
-function createTierSprite(colorHex: string, seed: number, size = 56): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  const rng = mulberry32(seed);
-  const color = new THREE.Color(colorHex);
-  const rgb = `${Math.round(color.r * 255)},${Math.round(color.g * 255)},${Math.round(color.b * 255)}`;
-  const cx = size / 2;
-  const cy = size / 2;
-
-  const lobeCount = 3;
-  for (let i = 0; i < lobeCount; i++) {
-    const angle = (i / lobeCount) * Math.PI * 2 + rngRange(rng, -0.4, 0.4);
-    const dist = rngRange(rng, size * 0.03, size * 0.09);
-    const lx = cx + Math.cos(angle) * dist;
-    const ly = cy + Math.sin(angle) * dist;
-    const r = size * rngRange(rng, 0.26, 0.32);
-    const gradient = ctx.createRadialGradient(lx, ly, 0, lx, ly, r);
-    gradient.addColorStop(0, `rgba(${rgb},1)`);
-    gradient.addColorStop(0.68, `rgba(${rgb},0.82)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-  }
-  // A brighter core ties the lobes together into one cohesive shape rather than
-  // reading as separate dots.
-  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.3);
-  core.addColorStop(0, `rgba(${rgb},0.6)`);
-  core.addColorStop(1, `rgba(${rgb},0)`);
-  ctx.fillStyle = core;
-  ctx.fillRect(0, 0, size, size);
-  return canvas;
 }
 
 /**
- * Builds the dab list in the same flat (u,v) plane the trunk skeleton lives in.
- *
- * The literal branch-tip cloud is *not* painted directly: dabs placed only near
- * each tip read as several separate detached blobs, because the procedural
- * branching leaves tips clustered with real gaps between them — not the one
- * continuous rounded mass the reference photo shows. Real cherry canopies (and
- * the reference art) read as a cumulus-cloud silhouette: many overlapping
- * rounded lobes fused into one shape with a bumpy but unbroken edge. So instead
- * this scatters lobe centers on an evenly-spaced jittered grid across an oval
- * footprint (sized from the tip cloud, tapered at the bottom toward the trunk
- * fork), then fills each lobe with one soft macro dab plus many small fine dabs.
- * The tip cloud only decides the footprint's size and position.
+ * Scatters cluster placements across the canopy footprint (sized from the branch
+ * tip cloud, same tapered-waist oval mask as the old dab system used) on a
+ * jittered grid — coarser than the old per-dab grid since each placement is now
+ * a whole illustrated cluster, not a paint dab. Shared by all three seasons
+ * (buildSeasonClusterSet is called once per season with this same list) so the
+ * canopy's silhouette doesn't jump around across a season change — only which
+ * images are shown, and how many of them, does.
  */
-function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
+function buildClusterPlacements(rng: Rng, tips: Tip2D[]): ClusterPlacement[] {
   let uMin = Infinity;
   let uMax = -Infinity;
   let vMin = Infinity;
@@ -571,9 +537,6 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
   const maskCenterV = (vMin + vMax) / 2 + halfHUp * 0.06;
   const bottomTaperV = vMin - halfHUp * 0.22;
 
-  // Inside-test for the footprint: an oval that narrows toward a waist in its
-  // bottom quarter (where the canopy gathers back down onto the trunk fork)
-  // instead of a plain ellipse that would look like it hovers over the tree.
   const insideMask = (u: number, v: number): number => {
     const t = THREE.MathUtils.clamp((v - bottomTaperV) / (halfHUp * 0.9), 0, 1);
     const waist = THREE.MathUtils.lerp(0.4, 1, t);
@@ -582,253 +545,96 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
     return 1 - (nu * nu + nv * nv);
   };
 
-  const heightBrightness = (v: number): number => {
-    const t = THREE.MathUtils.clamp((v - (maskCenterV - halfHUp)) / (halfHUp * 2 || 1), 0, 1);
-    // Matches BRIGHTNESS_TIERS' floor — see that constant's comment on why this
-    // stays close to 1.0 instead of a wider "real" shadow range.
-    return THREE.MathUtils.lerp(0.8, 1.0, t);
-  };
-
-  const tierForBrightness = (b: number): number => {
-    let best = 0;
-    let bestDiff = Infinity;
-    for (let i = 0; i < BRIGHTNESS_TIERS.length; i++) {
-      const diff = Math.abs(BRIGHTNESS_TIERS[i] - b);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        best = i;
-      }
-    }
-    return best;
-  };
-
-  // Separate column/row spacing rather than one square cell size: the footprint
-  // is wide and comparatively short (branches spread laterally more than
-  // vertically), so a cell size derived only from width leaves far too few rows
-  // to sample the mask's narrower vertical extent, producing real gaps.
-  //
-  // The grid resolution here is deliberately far denser than looks like it should
-  // be necessary — a first pass at "enough" lobes (~60) left visible gaps between
-  // dabs wide enough for the black trunk to show through, and semi-transparent
-  // dabs blending against that black background is what actually caused the
-  // muddy/purple look, not the color choices. Overshooting density first and
-  // trimming individual knobs afterward (sparkle count, hue spread, ...) finds the
-  // real "enough" far more reliably than creeping up from a conservative guess.
-  const cols = 30;
-  const rows = 18;
+  const cols = 12;
+  const rows = 8;
   const cellW = (halfW * 2 * 1.08) / cols;
   const cellH = (halfHUp * 2 * 1.08) / rows;
-  const lobeRadiusBase = Math.max(cellW, cellH);
-  const lobeCenters: { u: number; v: number; radius: number; edge: number }[] = [];
+  const radiusBase = Math.max(cellW, cellH) * 0.72;
+
+  const placements: ClusterPlacement[] = [];
   for (let row = 0; row <= rows; row++) {
     const gv = -halfHUp * 1.08 + row * cellH;
     for (let col = 0; col <= cols; col++) {
       const gu = uCenter - halfW * 1.08 + col * cellW;
-      const u = gu + rngRange(rng, -cellW * 0.4, cellW * 0.4);
-      const v = maskCenterV + gv + rngRange(rng, -cellH * 0.4, cellH * 0.4);
-      const edge = insideMask(u, v);
-      if (edge < -0.08) continue;
-      lobeCenters.push({ u, v, radius: lobeRadiusBase * rngRange(rng, 0.95, 1.3), edge });
+      const u = gu + rngRange(rng, -cellW * 0.42, cellW * 0.42);
+      const v = maskCenterV + gv + rngRange(rng, -cellH * 0.42, cellH * 0.42);
+      if (insideMask(u, v) < -0.08) continue;
+      placements.push({ u, v, radius: radiusBase * rngRange(rng, 0.8, 1.35), densityKey: rng() });
     }
   }
+  return placements;
+}
 
-  const dabs: CanopyDab[] = [];
-  for (const lobe of lobeCenters) {
-    // Lobes near the silhouette boundary (low `edge`) are sized up and drawn as
-    // visually distinct rounded bumps rather than blending flatly into their
-    // neighbors — the cumulus/cauliflower edge the reference photo's canopy shows,
-    // instead of a smoothly-tapered ellipse outline. Interior lobes stay as dense
-    // continuous fill.
-    const isEdgeLobe = lobe.edge < 0.32;
-    const radius = lobe.radius * (isEdgeLobe ? rngRange(rng, 1.05, 1.18) : 1);
+// How much larger than a placement's nominal radius the plane needs to be: each
+// generated image has the cluster filling most of its square frame but not all
+// of it (padding was part of the generation prompt so soft edges don't get cut
+// off), so the plane has to be sized up from the "content radius" to show that
+// padding without the content itself reading smaller than intended.
+const CLUSTER_PLANE_SCALE = 2.6;
 
-    // Opaque base fill: guarantees full coverage under the textured dabs below,
-    // so nothing but this lobe's own soft edge ever shows the trunk through —
-    // see CanopyDab.isBase's doc comment. Oversized (1.4x) so neighboring lobes'
-    // base fills overlap generously even at this grid's spacing.
-    dabs.push({
-      u: lobe.u,
-      v: lobe.v,
-      radius: radius * 1.4,
-      densityKey: rng() * 0.55,
-      tierIndex: tierForBrightness(heightBrightness(lobe.v) * rngRange(rng, 0.97, 1.03)),
-      rotation: 0,
-      isBase: true,
+function buildSeasonClusterSet(
+  seasonKey: Exclude<CanopySeasonKey, 'winter'>,
+  placements: ClusterPlacement[],
+  rng: Rng,
+  worldOf: (u: number, v: number) => THREE.Vector3,
+  billboardAlign: THREE.Quaternion,
+): SeasonClusterSet {
+  const urls = CANOPY_CLUSTER_URLS[seasonKey];
+  const textures = urls.map((f) => loadClusterTexture(f));
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const group = new THREE.Group();
+  const clusters: CanopyCluster[] = [];
+
+  for (const placement of placements) {
+    const material = new THREE.MeshBasicMaterial({
+      map: textures[Math.floor(rng() * textures.length)],
+      transparent: true,
+      depthWrite: false,
+      side: THREE.FrontSide,
     });
+    const mesh = new THREE.Mesh(geometry, material);
+    const side = placement.radius * CLUSTER_PLANE_SCALE;
+    mesh.scale.set(side * (rng() < 0.5 ? -1 : 1), side, 1);
+    mesh.quaternion.copy(billboardAlign);
+    mesh.rotation.z = rngRange(rng, 0, Math.PI * 2);
 
-    // Macro dab: the lobe's own soft rounded texture on top of the base fill.
-    // Kept in the same low densityKey band as the base so the overall silhouette
-    // survives even at spring/autumn's reduced density — only the fine surface
-    // texture thins out, not the shape itself.
-    dabs.push({
-      u: lobe.u,
-      v: lobe.v,
-      radius,
-      densityKey: rng() * 0.55,
-      tierIndex: tierForBrightness(heightBrightness(lobe.v) * rngRange(rng, 0.95, 1.05)),
-      rotation: rngRange(rng, 0, Math.PI * 2),
-      isBase: false,
-    });
+    const pivot = new THREE.Group();
+    pivot.position.copy(worldOf(placement.u, placement.v));
+    // A tiny per-cluster depth jitter (along the camera-facing normal) breaks the
+    // otherwise-exact coplanarity of every cluster. Without it, three.js's
+    // transparent-object sort has near-ties to resolve between clusters at
+    // (almost) equal camera distance, which can flicker as they sway; with it,
+    // overlap order is stable and — for free — reads as the layered depth a real
+    // bushy canopy has instead of one flat card.
+    const depthJitter = rngRange(rng, -0.12, 0.12);
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(billboardAlign);
+    pivot.position.addScaledVector(normal, depthJitter);
+    pivot.add(mesh);
+    group.add(pivot);
 
-    const fineCount = 30;
-    const spread = isEdgeLobe ? 0.92 : 1.08;
-    for (let i = 0; i < fineCount; i++) {
-      const angle = rngRange(rng, 0, Math.PI * 2);
-      const dist = Math.sqrt(rng()) * radius * spread;
-      const du = Math.cos(angle) * dist;
-      const dv = Math.sin(angle) * dist;
-      const brightness = heightBrightness(lobe.v + dv) * rngRange(rng, 0.82, 1.18);
-      dabs.push({
-        u: lobe.u + du,
-        v: lobe.v + dv,
-        radius: rngRange(rng, 0.16, 0.36) * radius,
-        densityKey: rng(),
-        tierIndex: tierForBrightness(brightness),
-        rotation: rngRange(rng, 0, Math.PI * 2),
-        isBase: false,
-      });
-    }
-  }
-
-  // Sparkle highlights: a handful of very small, very bright dabs scattered near
-  // the top/outer edge of the canopy — individual blossom clusters catching light,
-  // rather than the smooth brightness gradient alone. A pure brightness gradient
-  // reads as an airbrushed sphere; distinct sparkle points read as sunlight caught
-  // on real texture.
-  const topTier = BRIGHTNESS_TIERS.length - 1;
-  const sparkleCount = Math.round(lobeCenters.length * 0.35);
-  for (let i = 0; i < sparkleCount; i++) {
-    const lobe = lobeCenters[Math.floor(rng() * lobeCenters.length)];
-    if (!lobe) continue;
-    // Bias toward the upper half of the lobe (away from straight down), so
-    // sparkles read as sunlit rather than scattered uniformly. angle=0 is +u
-    // (right), angle=π/2 is +v (up), so [0, π] sweeps right→up→left.
-    const angle = rngRange(rng, 0, Math.PI);
-    const dist = rngRange(rng, 0.5, 1.05) * lobe.radius;
-    dabs.push({
-      u: lobe.u + Math.cos(angle) * dist,
-      v: lobe.v + Math.sin(angle) * dist,
-      radius: rngRange(rng, 0.05, 0.1) * lobe.radius,
-      densityKey: rng() * 0.85,
-      tierIndex: topTier,
-      rotation: rngRange(rng, 0, Math.PI * 2),
-      isBase: false,
+    clusters.push({
+      mesh,
+      pivot,
+      densityKey: placement.densityKey,
+      swayPhase: rngRange(rng, 0, Math.PI * 2),
+      swayFreq: rngRange(rng, 1.6, 3.2),
+      swayAmp: rngRange(rng, 0.06, 0.16),
     });
   }
 
-  return dabs;
-}
-
-interface CanopyBounds {
-  uMid: number;
-  vMid: number;
-  planeWidth: number;
-  planeHeight: number;
-}
-
-function computeCanopyBounds(dabs: CanopyDab[]): CanopyBounds {
-  let uMin = Infinity;
-  let uMax = -Infinity;
-  let vMin = Infinity;
-  let vMax = -Infinity;
-  for (const dab of dabs) {
-    uMin = Math.min(uMin, dab.u - dab.radius);
-    uMax = Math.max(uMax, dab.u + dab.radius);
-    vMin = Math.min(vMin, dab.v - dab.radius);
-    vMax = Math.max(vMax, dab.v + dab.radius);
-  }
-  return {
-    uMid: (uMin + uMax) / 2,
-    vMid: (vMin + vMax) / 2,
-    planeWidth: uMax - uMin,
-    planeHeight: vMax - vMin,
-  };
-}
-
-function bakeCanopyTexture(
-  dabs: CanopyDab[],
-  density: number,
-  tierSprites: HTMLCanvasElement[],
-  tierRgb: string[],
-  bounds: CanopyBounds,
-): THREE.CanvasTexture {
-  const canvasWidth = Math.max(32, Math.round(bounds.planeWidth * PIXELS_PER_WORLD_UNIT));
-  const canvasHeight = Math.max(32, Math.round(bounds.planeHeight * PIXELS_PER_WORLD_UNIT));
-  const canvas = document.createElement('canvas');
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
-  const ctx = canvas.getContext('2d')!;
-
-  const toPx = (dab: CanopyDab): [number, number, number] => [
-    (dab.u - bounds.uMid + bounds.planeWidth / 2) * PIXELS_PER_WORLD_UNIT,
-    (bounds.planeHeight / 2 - (dab.v - bounds.vMid)) * PIXELS_PER_WORLD_UNIT,
-    dab.radius * PIXELS_PER_WORLD_UNIT,
-  ];
-
-  // Base pass first, entirely separate from the textured pass below: every base
-  // dab must be solid before anything else is drawn, or a later base dab could
-  // still paint over — and partially reveal through alpha blending — an earlier
-  // textured dab's soft edge. See CanopyDab.isBase's doc comment.
-  for (const dab of dabs) {
-    if (!dab.isBase || dab.densityKey >= density) continue;
-    const [px, py, pr] = toPx(dab);
-    const gradient = ctx.createRadialGradient(px, py, 0, px, py, pr);
-    const rgb = tierRgb[dab.tierIndex];
-    gradient.addColorStop(0, `rgba(${rgb},1)`);
-    gradient.addColorStop(0.72, `rgba(${rgb},1)`);
-    gradient.addColorStop(1, `rgba(${rgb},0)`);
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.arc(px, py, pr, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  for (const dab of dabs) {
-    if (dab.isBase || dab.densityKey >= density) continue;
-    const [px, py, pr] = toPx(dab);
-    // Rotating each stamp independently turns the handful of base sprites (each
-    // itself an asymmetric multi-lobe cluster, not a circle) into effectively
-    // unlimited apparent variety instead of visibly repeating a stamp pattern.
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(dab.rotation);
-    ctx.drawImage(tierSprites[dab.tierIndex], -pr, -pr, pr * 2, pr * 2);
-    ctx.restore();
-  }
-
-  // A final soft-focus pass: even at this dab density, the reference photo's
-  // canopy is smoother than any number of discrete stamped dabs alone can read as
-  // — real paint (and real out-of-focus foliage) blends at a finer grain than a
-  // sane dab count can cover. A small blur softens dab edges into a continuous
-  // gradient without erasing the shading/color variation the dabs painted in.
-  const blurred = document.createElement('canvas');
-  blurred.width = canvasWidth;
-  blurred.height = canvasHeight;
-  const bctx = blurred.getContext('2d')!;
-  bctx.filter = 'blur(4px)';
-  bctx.drawImage(canvas, 0, 0);
-
-  const texture = new THREE.CanvasTexture(blurred);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
+  return { group, clusters };
 }
 
 /**
- * Procedural single-tree generator, drawn (not simulated) to match the reference
- * photo's silhouette (season-transition-animation.md's base composition reference,
- * `1786259704552.png`): a short, thick trunk splitting low into two spreading main
- * limbs, opening into a canopy noticeably wider than the trunk is tall. Both the
- * trunk/branches and the canopy are flat camera-facing planes baked once from
- * Canvas2D painting — see this module's two doc comments for why a fixed camera
- * makes that the right technique instead of live 3D geometry.
- *
- * `densityLevels` are the distinct canopy densities the season system will ever ask
- * for (season-transition-animation.md's per-scene canopyDensity values) — one
- * texture is pre-baked per distinct value so `setCanopySeasonState` only ever swaps
- * a texture reference, never re-bakes at runtime.
+ * Procedural single-tree generator: the trunk/branches are drawn as a 2D bezier
+ * painting (see this module's earlier doc comment), the canopy is populated with
+ * generated cluster images (see the doc comment just above). Both are built once
+ * around the reference photo's silhouette (season-transition-animation.md's base
+ * composition reference, `1786259704552.png`): a short, thick trunk splitting low
+ * into two spreading main limbs, opening into a canopy noticeably wider than the
+ * trunk is tall.
  */
-export function createTree(seed = 20260809, densityLevels: number[] = [1]): TreeHandle {
+export function createTree(seed = 20260809): TreeHandle {
   const rng = mulberry32(seed);
   const skeleton = buildSkeleton2D(rng);
   const skeletonBounds = computeSkeletonBounds(skeleton.branches);
@@ -861,95 +667,87 @@ export function createTree(seed = 20260809, densityLevels: number[] = [1]): Tree
     worldOf((skeletonBounds.uMin + skeletonBounds.uMax) / 2, (skeletonBounds.vMin + skeletonBounds.vMax) / 2),
   );
 
-  const dabs = buildCanopyDabs(rng, skeleton.tips);
-  const bounds = computeCanopyBounds(dabs);
-  const tierSprites = COLOR_TIERS.map((hex, i) => createTierSprite(hex, seed + i + 1));
-  const tierRgb = COLOR_TIERS.map((hex) => {
-    const c = new THREE.Color(hex);
-    return `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`;
-  });
-
-  const distinctDensities = [...new Set(densityLevels)];
-  const canopyTextures: CanopyTextureVariant[] = distinctDensities.map((density) => ({
-    density,
-    texture: bakeCanopyTexture(dabs, density, tierSprites, tierRgb, bounds),
-  }));
-
-  // Unlit on purpose: a physically-lit material darkens toward whichever season's
-  // sun angle happens to graze this billboard plane least, which read as a muddy
-  // near-maroon canopy regardless of the pastel color set on it. Since the camera
-  // never moves there's no lighting cue to preserve anyway — the height-based
-  // brightness gradient is already baked into the texture itself (heightBrightness
-  // above), so the true season color shows through undimmed.
-  const canopyMaterial = new THREE.MeshBasicMaterial({
-    map: canopyTextures[0].texture,
-    color: '#7abf56',
-    transparent: true,
-    depthWrite: false,
-    side: THREE.FrontSide,
-  });
-  const canopyMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(bounds.planeWidth, bounds.planeHeight),
-    canopyMaterial,
-  );
-  canopyMesh.quaternion.copy(billboardAlign);
+  const placements = buildClusterPlacements(rng, skeleton.tips);
+  const seasonClusters = {
+    spring: buildSeasonClusterSet('spring', placements, rng, worldOf, billboardAlign),
+    summer: buildSeasonClusterSet('summer', placements, rng, worldOf, billboardAlign),
+    autumn: buildSeasonClusterSet('autumn', placements, rng, worldOf, billboardAlign),
+  };
 
   // The pivot sits at the branch fork point (u,v) rather than the canopy's own
   // center, so rotating it for sway swings the top of the mass further than the
   // bottom — like something actually hanging off the tree, not spinning in place.
   const canopyPivot = new THREE.Group();
   canopyPivot.position.copy(worldOf(skeleton.forkPoint.x, skeleton.forkPoint.y));
-  canopyMesh.position
-    .copy(worldOf(bounds.uMid, bounds.vMid))
-    .sub(canopyPivot.position);
-  canopyPivot.add(canopyMesh);
+  for (const season of Object.values(seasonClusters)) {
+    for (const cluster of season.clusters) {
+      cluster.pivot.position.sub(canopyPivot.position);
+    }
+    canopyPivot.add(season.group);
+    season.group.visible = false;
+  }
 
   const group = new THREE.Group();
   group.add(trunkMesh, canopyPivot);
 
-  const seasonState: TreeSeasonState = { density: canopyTextures[0].density, scale: 1 };
+  const seasonState: TreeSeasonState = { seasonKey: 'winter', density: 0, scale: 1 };
 
   return {
     group,
     trunkMesh,
-    canopyMesh,
-    canopyMaterial,
     canopyPivot,
-    canopyTextures,
+    seasonClusters,
     seasonState,
   };
 }
 
 /** Called by the season system (依頼A') whenever the dial moves to a new blend.
- *  Picks the nearest pre-baked texture rather than baking on demand. */
-export function setCanopySeasonState(tree: TreeHandle, density: number, scale: number): void {
+ *  `seasonId` picks which season's pre-built cluster set is shown (winter shows
+ *  none — the bare tree); within that set, `density` toggles individual clusters
+ *  on/off by their baked densityKey, same pattern as vegetation.ts/flowers.ts. */
+export function setCanopySeasonState(
+  tree: TreeHandle,
+  seasonKey: CanopySeasonKey,
+  density: number,
+  scale: number,
+): void {
+  tree.seasonState.seasonKey = seasonKey;
   tree.seasonState.density = density;
   tree.seasonState.scale = scale;
+  tree.canopyPivot.scale.setScalar(scale);
 
-  let closest = tree.canopyTextures[0];
-  let bestDiff = Infinity;
-  for (const variant of tree.canopyTextures) {
-    const diff = Math.abs(variant.density - density);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      closest = variant;
+  for (const [key, season] of Object.entries(tree.seasonClusters)) {
+    const isActive = key === seasonKey;
+    season.group.visible = isActive;
+    if (!isActive) continue;
+    for (const cluster of season.clusters) {
+      cluster.mesh.visible = cluster.densityKey < density;
     }
   }
-  tree.canopyMaterial.map = closest.texture;
-  tree.canopyMesh.scale.setScalar(scale);
 }
 
-/** Sets the canopy tint — the baked texture stores relative shading only (near-
- *  grayscale brightness), so the season's actual hue comes entirely from this
- *  material color multiplying it. */
-export function setCanopyColor(tree: TreeHandle, color: THREE.Color): void {
-  tree.canopyMaterial.color.copy(color);
-}
-
-/** Called every frame by the render loop (依頼B) to animate the canopy's whole-
- *  mass sway (see canopyPivot's doc comment on createTree). The trunk plane has
- *  no sway of its own — real trunks barely move; only the crown does. */
+/** Called every frame by the render loop (依頼B) to animate the canopy: a shared
+ *  whole-mass sway (canopyPivot, correlated across every cluster) plus each
+ *  visible cluster's own higher-frequency independent flutter on top — the same
+ *  "thick branches sway slow and wide, thin twigs flutter small and fast"
+ *  hierarchy the trunk's old sway shader used, now expressed as two nested
+ *  pivots instead of a vertex shader. The trunk plane itself has no sway of its
+ *  own; real trunks barely move, only the crown does. */
 export function updateTreeAnimation(tree: TreeHandle, time: number, fieldStrength: number): void {
   tree.canopyPivot.rotation.z = Math.sin(time * 1.1) * 0.045 * fieldStrength;
   tree.canopyPivot.rotation.x = Math.sin(time * 0.85 + 1.7) * 0.03 * fieldStrength;
+
+  const seasonKey = tree.seasonState.seasonKey;
+  if (seasonKey === 'winter') return;
+  const season = tree.seasonClusters[seasonKey];
+  for (const cluster of season.clusters) {
+    if (!cluster.mesh.visible) continue;
+    cluster.pivot.rotation.z =
+      Math.sin(time * cluster.swayFreq + cluster.swayPhase) * cluster.swayAmp * fieldStrength;
+    cluster.pivot.rotation.x =
+      Math.cos(time * cluster.swayFreq * 0.7 + cluster.swayPhase * 1.3) *
+      cluster.swayAmp *
+      0.6 *
+      fieldStrength;
+  }
 }
