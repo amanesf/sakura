@@ -12,8 +12,9 @@ const SEASON_WEIGHTS: Record<SeasonId, number> = {
   springBloom: 1.5,
   springFall: 1.3,
   summer: 0.9,
-  autumnColor: 1.1,
-  autumnFall: 0.9,
+  // Carries roughly the combined weight of the two scenes it replaced (color +
+  // shedding), so autumn isn't rushed relative to spring's two-scene arc.
+  autumn: 1.7,
 };
 
 const TOTAL_WEIGHT = SEASON_ORDER.reduce((sum, id) => sum + SEASON_WEIGHTS[id], 0);
@@ -33,10 +34,27 @@ function wrap01(x: number): number {
   return ((x % 1) + 1) % 1;
 }
 
-/** Angle-fraction (0..1 around the physical dial) for each of the 6 notches, in
- *  loop order — for drawing tick marks at their true (non-uniform) positions. */
+/** Angle-fraction (0..1 around the physical dial) for each notch, in loop order —
+ *  for drawing tick marks at their true (non-uniform) positions. */
 export function getNotchAngleFractions(): readonly number[] {
   return NOTCH_FRACTIONS.slice(0, SEASON_ORDER.length);
+}
+
+export interface DialWedgeRange {
+  seasonId: SeasonId;
+  startFraction: number;
+  endFraction: number;
+}
+
+/** The [start,end) angle-fraction span of each season's pie wedge — for painting
+ *  the dial face's wedge segments (season-transition-animation.md §7.1 reference
+ *  device: a glass-covered ring of small season vignettes). */
+export function getDialWedgeRanges(): readonly DialWedgeRange[] {
+  return SEASON_ORDER.map((seasonId, i) => ({
+    seasonId,
+    startFraction: NOTCH_FRACTIONS[i],
+    endFraction: NOTCH_FRACTIONS[i + 1],
+  }));
 }
 
 /**

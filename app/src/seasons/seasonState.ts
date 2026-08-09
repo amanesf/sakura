@@ -1,26 +1,21 @@
 import * as THREE from 'three';
 
 /**
- * The 6 scenes from season-transition-animation.md §2, in loop order (§2 "ループ順").
- * springFall/autumnFall are the mid-shedding "散り際" scenes, not just alternate
- * palettes — their canopyDensity below is deliberately lower than their paired
- * bloom/color scene.
+ * The 5 scenes from season-transition-animation.md §2 (in loop order, §2 "ループ順"),
+ * with autumn's colorful and shedding stages consolidated into one scene per user
+ * direction rather than the doc's original 6-scene split. springFall stays a
+ * separate "散り際" scene from springBloom — this consolidation is autumn-only.
+ * `autumn` shows both a colored canopy and active leaf-shedding at once (see its
+ * sheddingSensitivity below), rather than picking one or the other.
  */
-export type SeasonId =
-  | 'winter'
-  | 'springBloom'
-  | 'springFall'
-  | 'summer'
-  | 'autumnColor'
-  | 'autumnFall';
+export type SeasonId = 'winter' | 'springBloom' | 'springFall' | 'summer' | 'autumn';
 
 export const SEASON_ORDER: readonly SeasonId[] = [
   'winter',
   'springBloom',
   'springFall',
   'summer',
-  'autumnColor',
-  'autumnFall',
+  'autumn',
 ];
 
 export interface SeasonVisualParams {
@@ -248,67 +243,40 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     hemiIntensity: 1.0,
     toneMappingExposure: 1.1,
   },
-  autumnColor: {
-    id: 'autumnColor',
-    label: '秋・紅葉',
-    canopyDensity: 0.95,
-    canopyScale: 1.0,
-    canopyColor: '#d9622a',
-    groundColor: '#b98a3f',
-    farShoreColor: '#a97a35',
-    vegetationColor: '#c9b98a',
-    vegetationDensity: 0.8,
-    vegetationHeight: 0.85,
-    sheddingColor: '#e8a15c',
-    sheddingSensitivity: 0,
-    lakeTint: '#c98a5c',
-    skyTop: '#e8a15c',
-    skyHorizon: '#ffd9a0',
-    skyBottom: '#f2c48a',
-    mountainNear: '#8a6a4f',
-    mountainFar: '#c1a488',
-    fogColor: '#f0d3ad',
-    fogNear: 22,
-    fogFar: 78,
-    sunColor: '#ffb066',
-    sunIntensity: 1.9,
-    sunElevationDeg: 18,
-    sunAzimuthDeg: -55,
-    hemiSky: '#f2c48a',
-    hemiGround: '#7a5a3a',
-    hemiIntensity: 0.8,
-    toneMappingExposure: 1.03,
-  },
-  autumnFall: {
-    id: 'autumnFall',
-    label: '秋・落葉',
-    canopyDensity: 0.32,
-    canopyScale: 0.8,
-    canopyColor: '#b8551f',
-    groundColor: '#9c6a2f',
-    farShoreColor: '#8a5f2c',
-    vegetationColor: '#b09a6a',
-    vegetationDensity: 0.7,
-    vegetationHeight: 0.75,
-    sheddingColor: '#c9702f',
+  autumn: {
+    // Consolidates the former autumnColor/autumnFall pair into one scene: a still
+    // mostly-colorful canopy (§10's warm low-angle light) with leaves actively
+    // shedding at the same time (sheddingSensitivity below), rather than picking
+    // "just turned" vs. "already bare" as separate dial notches.
+    id: 'autumn',
+    label: '秋',
+    canopyDensity: 0.78,
+    canopyScale: 0.95,
+    canopyColor: '#d0651f',
+    groundColor: '#ad7936',
+    farShoreColor: '#98722f',
+    vegetationColor: '#bea87c',
+    vegetationDensity: 0.75,
+    vegetationHeight: 0.8,
+    sheddingColor: '#cf7a30',
     sheddingSensitivity: 4.6,
-    lakeTint: '#b57a52',
-    skyTop: '#d98f52',
-    skyHorizon: '#f2c48a',
-    skyBottom: '#e0ac72',
-    mountainNear: '#7d604a',
-    mountainFar: '#b39678',
-    fogColor: '#e6c298',
-    fogNear: 20,
-    fogFar: 72,
-    sunColor: '#ff9d55',
-    sunIntensity: 1.6,
-    sunElevationDeg: 14,
-    sunAzimuthDeg: -58,
-    hemiSky: '#e0ac72',
-    hemiGround: '#6a4e30',
-    hemiIntensity: 0.72,
-    toneMappingExposure: 0.98,
+    lakeTint: '#c08059',
+    skyTop: '#e08f56',
+    skyHorizon: '#f7d2a0',
+    skyBottom: '#e9bc84',
+    mountainNear: '#836654',
+    mountainFar: '#bb9c81',
+    fogColor: '#ecc9a2',
+    fogNear: 21,
+    fogFar: 75,
+    sunColor: '#ffa860',
+    sunIntensity: 1.75,
+    sunElevationDeg: 16,
+    sunAzimuthDeg: -56,
+    hemiSky: '#e9bc84',
+    hemiGround: '#725036',
+    hemiIntensity: 0.76,
+    toneMappingExposure: 1.0,
   },
 };
 
