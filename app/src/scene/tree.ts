@@ -69,12 +69,14 @@ interface Tip2D {
 
 // One child-branch count per depth level. depth0→1 is the low double-trunk "V"
 // split the reference photo's winter (bare) panel shows clearly; depth1→2 fans
-// each main limb out to build canopy width; the two finest levels add the fine
-// twig lace visible at the reference's silhouette edge.
-const BRANCH_COUNTS = [1, 2, 3, 2, 2, 2, 2, 2];
+// each main limb out to build canopy width; the three finest levels add the fine,
+// dense twig lace visible at the reference's silhouette edge.
+const BRANCH_COUNTS = [1, 2, 3, 2, 2, 2, 2, 2, 2];
 const MAX_DEPTH = BRANCH_COUNTS.length - 1;
 const TREE_SCALE = 1.45;
-const DEPTH_LENGTH = [0.85, 1.55, 1.05, 0.8, 0.62, 0.48, 0.38, 0.3].map((l) => l * TREE_SCALE);
+const DEPTH_LENGTH = [0.85, 1.55, 1.05, 0.8, 0.62, 0.48, 0.38, 0.3, 0.24].map(
+  (l) => l * TREE_SCALE,
+);
 
 function angleDir(angleRad: number): THREE.Vector2 {
   return new THREE.Vector2(Math.sin(angleRad), Math.cos(angleRad));
@@ -212,6 +214,25 @@ function buildSkeleton2D(rng: Rng): Skeleton2D {
   const forkPoint = trunkCurve.p3;
   const trunkEndAngle = THREE.MathUtils.degToRad(trunkBendDeg);
 
+  // A few short root flanges splaying down and out from the base, purely for
+  // grounding — without them the trunk's base ribbon just ends in a flat cut where
+  // it meets the ground, which reads as a post stuck in the dirt rather than
+  // something rooted. bakeTrunkTexture also widens the trunk's own base radius.
+  const rootCount = 3;
+  for (let i = 0; i < rootCount; i++) {
+    const rootAngle =
+      Math.PI + (i / (rootCount - 1) - 0.5) * THREE.MathUtils.degToRad(70) +
+      THREE.MathUtils.degToRad(rngRange(rng, -8, 8));
+    const rootLength = rngRange(rng, 0.16, 0.24) * TREE_SCALE;
+    const rootCurve = branchCurve(trunkBase.clone(), Math.PI, rootAngle, rootLength);
+    branches.push({
+      ...rootCurve,
+      radiusStart: trunkRadius * rngRange(rng, 0.42, 0.55),
+      radiusEnd: trunkRadius * 0.06,
+      depth: MAX_DEPTH,
+    });
+  }
+
   const limbLength = DEPTH_LENGTH[1];
 
   const leftLeanDeg = rngRange(rng, 27, 35);
@@ -332,7 +353,12 @@ function bakeTrunkTexture(
       // Eased taper (t^0.6) so radius drops off faster near the tip than a
       // linear lerp would, matching how real branches thin.
       const eased = Math.pow(t, 0.6);
-      const r = THREE.MathUtils.lerp(b.radiusStart, b.radiusEnd, eased);
+      let r = THREE.MathUtils.lerp(b.radiusStart, b.radiusEnd, eased);
+      if (b.depth === 0) {
+        // Root flare: the trunk widens sharply right at the ground instead of
+        // meeting it as a uniform post.
+        r *= 1 + 0.5 * Math.max(0, 1 - t / 0.14);
+      }
       left.push(p.clone().addScaledVector(normal, r));
       right.push(p.clone().addScaledVector(normal, -r));
     }
@@ -361,7 +387,47 @@ function bakeTrunkTexture(
     ctx.fill();
   }
 
+  // Bark ridge/crack texture: a handful of thin, slightly darker strokes running
+  // roughly lengthwise along the thicker branches — flat silhouette fill alone
+  // reads as painted rubber, not wood. Confined to source-atop so it only marks
+  // already-opaque bark, never spills onto the transparent background.
   ctx.globalCompositeOperation = 'source-atop';
+  for (const b of branches) {
+    if (b.depth > 2) continue;
+    const crackCount = b.depth === 0 ? 5 : 3;
+    for (let c = 0; c < crackCount; c++) {
+      const tStart = rngRange(rng, 0, 0.5);
+      const tEnd = Math.min(1, tStart + rngRange(rng, 0.3, 0.6));
+      const sideOffset = rngRange(rng, -0.6, 0.6);
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i <= 8; i++) {
+        const t = THREE.MathUtils.lerp(tStart, tEnd, i / 8);
+        const p = bezierPoint(b.p0, b.p1, b.p2, b.p3, t);
+        const tNext = bezierPoint(b.p0, b.p1, b.p2, b.p3, Math.min(1, t + 0.02));
+        const tangent = new THREE.Vector2().subVectors(tNext, p);
+        if (tangent.lengthSq() < 1e-8) tangent.set(0, 1);
+        tangent.normalize();
+        const normal = new THREE.Vector2(-tangent.y, tangent.x);
+        const eased = Math.pow(t, 0.6);
+        const r = THREE.MathUtils.lerp(b.radiusStart, b.radiusEnd, eased);
+        const wobble = Math.sin(t * 11 + c * 3.1) * r * 0.12;
+        const off = p.clone().addScaledVector(normal, sideOffset * r * 0.7 + wobble);
+        const [x, y] = toPx(off.x, off.y);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.strokeStyle = `rgba(20,14,10,${rngRange(rng, 0.12, 0.22)})`;
+      ctx.lineWidth = Math.max(1, (b.radiusStart * pixelsPerUnit) * 0.06);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+  }
+
   const grad = ctx.createLinearGradient(width * 0.15, 0, width * 0.75, height);
   grad.addColorStop(0, 'rgba(255,241,222,0.22)');
   grad.addColorStop(0.55, 'rgba(255,241,222,0)');
@@ -401,22 +467,67 @@ interface CanopyDab {
   radius: number;
   densityKey: number;
   tierIndex: number;
+  rotation: number;
 }
 
-const BRIGHTNESS_TIERS = [0.55, 0.68, 0.8, 0.9, 1.0];
+// Brightness levels drive which pre-baked sprite a dab uses; BRIGHTNESS_TIERS is
+// only the numeric ladder `tierForBrightness` snaps to. COLOR_TIERS is the actual
+// paint at each level — not pure grayscale. A cool, slightly purple-tinted shadow
+// through to a warm near-white highlight, so once a season's canopyColor multiplies
+// this texture (setCanopyColor), the shadow side comes out desaturated/cooler and
+// the lit side warmer, instead of every tier just being the same hue at a different
+// brightness. The same "one consistent light direction" idea as the trunk's
+// source-atop gradient, expressed as paint instead of a lighting shader.
+// A wide, dark shadow tier reintroduced the exact "muddy dark maroon" problem
+// that going unlit was supposed to fix: multiplying a texture value against a
+// moderately saturated season color crushes whichever channel is weakest in that
+// color (pink's green, autumn's blue, ...) much harder than the others, so a
+// "shadow" tier at 0.55-0.6 comes out desaturated and muddy rather than a
+// believably darker version of the same hue. Working backward from pink (the
+// worst case — its green channel is the most unbalanced) to a result that still
+// reads as pink rather than mauve put the floor around 0.78, not the ~0.55 a
+// real light/shadow contrast would suggest — so the tier ladder here is narrow
+// and bright on purpose, prioritizing "still looks like the season's color" over
+// dramatic shading range.
+const BRIGHTNESS_TIERS = [0.78, 0.85, 0.91, 0.96, 1.0];
+const COLOR_TIERS = ['#c0bac8', '#d4d0ce', '#e6e3d9', '#f3eede', '#fff8ec'];
 const PIXELS_PER_WORLD_UNIT = 140;
 
-function createTierSprite(brightness: number, size = 48): HTMLCanvasElement {
+/** A dab sprite is a small cluster of 3-4 overlapping soft lobes rather than one
+ *  perfect circle — stamped (with a random rotation per dab, see bakeCanopyTexture)
+ *  it reads as an irregular petal/blossom cluster instead of a uniform dot, which is
+ *  what actually sells "painted flowers" over "pile of circles" at this scale. */
+function createTierSprite(colorHex: string, seed: number, size = 56): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const v = Math.round(THREE.MathUtils.clamp(brightness, 0, 1) * 255);
-  const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  gradient.addColorStop(0, `rgba(${v},${v},${v},1)`);
-  gradient.addColorStop(0.65, `rgba(${v},${v},${v},0.9)`);
-  gradient.addColorStop(1, `rgba(${v},${v},${v},0)`);
-  ctx.fillStyle = gradient;
+  const rng = mulberry32(seed);
+  const color = new THREE.Color(colorHex);
+  const rgb = `${Math.round(color.r * 255)},${Math.round(color.g * 255)},${Math.round(color.b * 255)}`;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  const lobeCount = 3;
+  for (let i = 0; i < lobeCount; i++) {
+    const angle = (i / lobeCount) * Math.PI * 2 + rngRange(rng, -0.4, 0.4);
+    const dist = rngRange(rng, size * 0.03, size * 0.09);
+    const lx = cx + Math.cos(angle) * dist;
+    const ly = cy + Math.sin(angle) * dist;
+    const r = size * rngRange(rng, 0.26, 0.32);
+    const gradient = ctx.createRadialGradient(lx, ly, 0, lx, ly, r);
+    gradient.addColorStop(0, `rgba(${rgb},1)`);
+    gradient.addColorStop(0.68, `rgba(${rgb},0.82)`);
+    gradient.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+  }
+  // A brighter core ties the lobes together into one cohesive shape rather than
+  // reading as separate dots.
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 0.3);
+  core.addColorStop(0, `rgba(${rgb},0.6)`);
+  core.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = core;
   ctx.fillRect(0, 0, size, size);
   return canvas;
 }
@@ -466,7 +577,9 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
 
   const heightBrightness = (v: number): number => {
     const t = THREE.MathUtils.clamp((v - (maskCenterV - halfHUp)) / (halfHUp * 2 || 1), 0, 1);
-    return THREE.MathUtils.lerp(0.58, 1.0, t);
+    // Matches BRIGHTNESS_TIERS' floor — see that constant's comment on why this
+    // stays close to 1.0 instead of a wider "real" shadow range.
+    return THREE.MathUtils.lerp(0.8, 1.0, t);
   };
 
   const tierForBrightness = (b: number): number => {
@@ -491,47 +604,85 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
   const cellW = (halfW * 2 * 1.08) / cols;
   const cellH = (halfHUp * 2 * 1.08) / rows;
   const lobeRadiusBase = Math.max(cellW, cellH);
-  const lobeCenters: { u: number; v: number; radius: number }[] = [];
+  const lobeCenters: { u: number; v: number; radius: number; edge: number }[] = [];
   for (let row = 0; row <= rows; row++) {
     const gv = -halfHUp * 1.08 + row * cellH;
     for (let col = 0; col <= cols; col++) {
       const gu = uCenter - halfW * 1.08 + col * cellW;
       const u = gu + rngRange(rng, -cellW * 0.4, cellW * 0.4);
       const v = maskCenterV + gv + rngRange(rng, -cellH * 0.4, cellH * 0.4);
-      if (insideMask(u, v) < -0.08) continue;
-      lobeCenters.push({ u, v, radius: lobeRadiusBase * rngRange(rng, 0.62, 0.88) });
+      const edge = insideMask(u, v);
+      if (edge < -0.08) continue;
+      lobeCenters.push({ u, v, radius: lobeRadiusBase * rngRange(rng, 0.62, 0.88), edge });
     }
   }
 
   const dabs: CanopyDab[] = [];
   for (const lobe of lobeCenters) {
+    // Lobes near the silhouette boundary (low `edge`) are sized up and drawn as
+    // visually distinct rounded bumps rather than blending flatly into their
+    // neighbors — the cumulus/cauliflower edge the reference photo's canopy shows,
+    // instead of a smoothly-tapered ellipse outline. Interior lobes stay as dense
+    // continuous fill.
+    const isEdgeLobe = lobe.edge < 0.32;
+    const radius = lobe.radius * (isEdgeLobe ? rngRange(rng, 1.05, 1.18) : 1);
+
     // Macro dab: the lobe's own soft rounded base. Kept in a low densityKey band
     // (0..0.55) so the overall silhouette survives even at spring/autumn's reduced
     // density — only the fine surface texture thins out, not the shape itself.
     dabs.push({
       u: lobe.u,
       v: lobe.v,
-      radius: lobe.radius,
+      radius,
       densityKey: rng() * 0.55,
       tierIndex: tierForBrightness(heightBrightness(lobe.v) * rngRange(rng, 0.95, 1.05)),
+      rotation: rngRange(rng, 0, Math.PI * 2),
     });
 
     const fineCount = 42;
+    const spread = isEdgeLobe ? 0.92 : 1.08;
     for (let i = 0; i < fineCount; i++) {
       const angle = rngRange(rng, 0, Math.PI * 2);
-      const dist = Math.sqrt(rng()) * lobe.radius * 1.08;
+      const dist = Math.sqrt(rng()) * radius * spread;
       const du = Math.cos(angle) * dist;
       const dv = Math.sin(angle) * dist;
       const brightness = heightBrightness(lobe.v + dv) * rngRange(rng, 0.82, 1.18);
       dabs.push({
         u: lobe.u + du,
         v: lobe.v + dv,
-        radius: rngRange(rng, 0.14, 0.34) * lobe.radius,
+        radius: rngRange(rng, 0.14, 0.34) * radius,
         densityKey: rng(),
         tierIndex: tierForBrightness(brightness),
+        rotation: rngRange(rng, 0, Math.PI * 2),
       });
     }
   }
+
+  // Sparkle highlights: a handful of very small, very bright dabs scattered near
+  // the top/outer edge of the canopy — individual blossom clusters catching light,
+  // rather than the smooth brightness gradient alone. A pure brightness gradient
+  // reads as an airbrushed sphere; distinct sparkle points read as sunlight caught
+  // on real texture.
+  const topTier = BRIGHTNESS_TIERS.length - 1;
+  const sparkleCount = Math.round(lobeCenters.length * 0.6);
+  for (let i = 0; i < sparkleCount; i++) {
+    const lobe = lobeCenters[Math.floor(rng() * lobeCenters.length)];
+    if (!lobe) continue;
+    // Bias toward the upper half of the lobe (away from straight down), so
+    // sparkles read as sunlit rather than scattered uniformly. angle=0 is +u
+    // (right), angle=π/2 is +v (up), so [0, π] sweeps right→up→left.
+    const angle = rngRange(rng, 0, Math.PI);
+    const dist = rngRange(rng, 0.5, 1.05) * lobe.radius;
+    dabs.push({
+      u: lobe.u + Math.cos(angle) * dist,
+      v: lobe.v + Math.sin(angle) * dist,
+      radius: rngRange(rng, 0.05, 0.1) * lobe.radius,
+      densityKey: rng() * 0.85,
+      tierIndex: topTier,
+      rotation: rngRange(rng, 0, Math.PI * 2),
+    });
+  }
+
   return dabs;
 }
 
@@ -579,7 +730,14 @@ function bakeCanopyTexture(
     const px = (dab.u - bounds.uMid + bounds.planeWidth / 2) * PIXELS_PER_WORLD_UNIT;
     const py = (bounds.planeHeight / 2 - (dab.v - bounds.vMid)) * PIXELS_PER_WORLD_UNIT;
     const pr = dab.radius * PIXELS_PER_WORLD_UNIT;
-    ctx.drawImage(tierSprites[dab.tierIndex], px - pr, py - pr, pr * 2, pr * 2);
+    // Rotating each stamp independently turns the handful of base sprites (each
+    // itself an asymmetric multi-lobe cluster, not a circle) into effectively
+    // unlimited apparent variety instead of visibly repeating a stamp pattern.
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(dab.rotation);
+    ctx.drawImage(tierSprites[dab.tierIndex], -pr, -pr, pr * 2, pr * 2);
+    ctx.restore();
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -637,7 +795,7 @@ export function createTree(seed = 20260809, densityLevels: number[] = [1]): Tree
 
   const dabs = buildCanopyDabs(rng, skeleton.tips);
   const bounds = computeCanopyBounds(dabs);
-  const tierSprites = BRIGHTNESS_TIERS.map((b) => createTierSprite(b));
+  const tierSprites = COLOR_TIERS.map((hex, i) => createTierSprite(hex, seed + i + 1));
 
   const distinctDensities = [...new Set(densityLevels)];
   const canopyTextures: CanopyTextureVariant[] = distinctDensities.map((density) => ({

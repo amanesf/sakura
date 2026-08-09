@@ -68,9 +68,54 @@ function buildRidgeGeometry(
 }
 
 /**
+ * A flat single color reads as a paper cutout once real texture (the tree) sits in
+ * front of it. This bakes a soft vertical gradient — lighter/hazier toward the
+ * ridge top (v=1, ties into distance haze), a touch richer toward the base (v=0)
+ * — plus faint blotchy variation suggesting distant tree cover, fading out near
+ * the peak where real ridgelines read smoother/hazier. Grayscale only (like
+ * ground.ts's mottling): the season's hue still comes entirely from
+ * `material.color`, this just breaks up the flatness underneath it. The geometry's
+ * own UVs already run v=0 at the flat bottom edge to v=1 at the ridge line, so this
+ * maps directly with no extra bookkeeping.
+ */
+function createRidgeTexture(seed: number, size = 256): THREE.Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  const grad = ctx.createLinearGradient(0, 0, 0, size);
+  grad.addColorStop(0, 'rgb(255,255,255)');
+  grad.addColorStop(1, 'rgb(196,196,196)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  const rng = mulberry32(seed);
+  const blotchCount = 140;
+  for (let i = 0; i < blotchCount; i++) {
+    const x = rngRange(rng, 0, size);
+    const y = rngRange(rng, size * 0.15, size);
+    // Fade blotch opacity out near the ridge top (small y) for a hazier peak.
+    const heightT = y / size;
+    const r = rngRange(rng, size * 0.02, size * 0.075);
+    const v = Math.round(rngRange(rng, 150, 220));
+    const alpha = rngRange(rng, 0.18, 0.4) * THREE.MathUtils.smoothstep(heightT, 0.05, 0.4);
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
+    gradient.addColorStop(0, `rgba(${v},${v},${v},${alpha})`);
+    gradient.addColorStop(1, `rgba(${v},${v},${v},0)`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+  }
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/**
  * Two layered ridgelines behind the lake (season-transition-animation.md §6: rear-most
- * "遠景" layer). Kept flat-colored and fog-blended rather than lit realistically —
- * at this distance atmospheric perspective reads more convincingly than shading detail.
+ * "遠景" layer). Fog-blended rather than lit realistically — at this distance
+ * atmospheric perspective reads more convincingly than real shading.
  */
 export function createMountains(seed = 20260809): MountainsHandle {
   const rng = mulberry32(seed);
@@ -81,14 +126,15 @@ export function createMountains(seed = 20260809): MountainsHandle {
     // Near layer's base sits close to the far layer's so it occludes most of the
     // far ridge's flat body, leaving only its jagged peaks poking above — otherwise
     // the exposed far "wall" reads as a flat pale band instead of a mountain shape.
-    { z: -30, width: 140, base: 15, jitter: 4.5, color: '#7f9a8e', bottomY: -4 },
-    { z: -48, width: 200, base: 17.5, jitter: 6, color: '#a3b9c0', bottomY: -4 },
+    { z: -30, width: 140, base: 15, jitter: 4.5, color: '#7f9a8e', bottomY: -4, seed: 4101 },
+    { z: -48, width: 200, base: 17.5, jitter: 6, color: '#a3b9c0', bottomY: -4, seed: 4102 },
   ];
 
   for (const cfg of configs) {
     const geometry = buildRidgeGeometry(rng, cfg.width, 48, cfg.base, cfg.jitter, cfg.bottomY);
     const material = new THREE.MeshLambertMaterial({
       color: cfg.color,
+      map: createRidgeTexture(cfg.seed),
       fog: true,
       flatShading: true,
     });

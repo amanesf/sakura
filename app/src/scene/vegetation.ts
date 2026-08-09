@@ -40,18 +40,36 @@ const TRUNK_EXCLUSION_RADIUS = 0.55;
 export function createVegetation(seed = 71): VegetationHandle {
   const rng = mulberry32(seed);
 
+  // A per-vertex brightness gradient (root darker, tip lighter) baked once here —
+  // a single flat material color on 900 identical blades reads as a uniform green
+  // rug; this alone gives each blade a base-to-tip highlight like real grass
+  // catching light at the tip, without needing per-blade geometry variation.
   const bladeGeometry = new THREE.PlaneGeometry(0.07, 1, 1, 3);
   bladeGeometry.translate(0, 0.5, 0);
+  {
+    const pos = bladeGeometry.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const t = THREE.MathUtils.clamp(pos.getY(i), 0, 1);
+      const shade = THREE.MathUtils.lerp(0.72, 1.15, t);
+      colors[i * 3] = shade;
+      colors[i * 3 + 1] = shade;
+      colors[i * 3 + 2] = shade;
+    }
+    bladeGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  }
 
   const material = new THREE.MeshStandardMaterial({
     color: '#4f9b3d',
     roughness: 0.9,
     side: THREE.DoubleSide,
+    vertexColors: true,
   });
 
   const mesh = new THREE.InstancedMesh(bladeGeometry, material, INSTANCE_COUNT);
 
   const instances: VegetationInstanceBase[] = [];
+  const instColor = new THREE.Color();
   let built = 0;
   let attempts = 0;
   while (built < INSTANCE_COUNT && attempts < INSTANCE_COUNT * 20) {
@@ -71,8 +89,13 @@ export function createVegetation(seed = 71): VegetationHandle {
       swayPhase: rngRange(rng, 0, Math.PI * 2),
       swayAmplitude: rngRange(rng, 0.7, 1.3),
     });
+    // Slight per-blade tonal jitter so the patch reads as many individual
+    // blades rather than one uniform-green instanced mass.
+    instColor.setHSL(0.28 + rngRange(rng, -0.025, 0.025), 0.5, rngRange(rng, 0.42, 0.58));
+    mesh.setColorAt(built, instColor);
     built++;
   }
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
   const seasonState: VegetationSeasonState = { density: 1, height: 1 };
   updateVegetationInstances(mesh, instances, seasonState, 0, 0);
