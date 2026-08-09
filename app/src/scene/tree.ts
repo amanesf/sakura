@@ -796,7 +796,19 @@ function bakeCanopyTexture(
     ctx.restore();
   }
 
-  const texture = new THREE.CanvasTexture(canvas);
+  // A final soft-focus pass: even at this dab density, the reference photo's
+  // canopy is smoother than any number of discrete stamped dabs alone can read as
+  // — real paint (and real out-of-focus foliage) blends at a finer grain than a
+  // sane dab count can cover. A small blur softens dab edges into a continuous
+  // gradient without erasing the shading/color variation the dabs painted in.
+  const blurred = document.createElement('canvas');
+  blurred.width = canvasWidth;
+  blurred.height = canvasHeight;
+  const bctx = blurred.getContext('2d')!;
+  bctx.filter = 'blur(4px)';
+  bctx.drawImage(canvas, 0, 0);
+
+  const texture = new THREE.CanvasTexture(blurred);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
