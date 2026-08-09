@@ -468,6 +468,13 @@ interface CanopyDab {
   densityKey: number;
   tierIndex: number;
   rotation: number;
+  /** Solid opaque base-fill dabs, drawn first and at full alpha (see
+   *  bakeCanopyTexture) — without them, gaps between the semi-transparent
+   *  textured dabs let the black trunk show through, and alpha-blending a light
+   *  color over black darkens/muddies it. A textured dab only ever refines what's
+   *  already solid; it never has to be the only thing standing between "canopy"
+   *  and bare canvas. */
+  isBase: boolean;
 }
 
 // Brightness levels drive which pre-baked sprite a dab uses; BRIGHTNESS_TIERS is
@@ -599,8 +606,16 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
   // is wide and comparatively short (branches spread laterally more than
   // vertically), so a cell size derived only from width leaves far too few rows
   // to sample the mask's narrower vertical extent, producing real gaps.
-  const cols = 10;
-  const rows = 6;
+  //
+  // The grid resolution here is deliberately far denser than looks like it should
+  // be necessary — a first pass at "enough" lobes (~60) left visible gaps between
+  // dabs wide enough for the black trunk to show through, and semi-transparent
+  // dabs blending against that black background is what actually caused the
+  // muddy/purple look, not the color choices. Overshooting density first and
+  // trimming individual knobs afterward (sparkle count, hue spread, ...) finds the
+  // real "enough" far more reliably than creeping up from a conservative guess.
+  const cols = 30;
+  const rows = 18;
   const cellW = (halfW * 2 * 1.08) / cols;
   const cellH = (halfHUp * 2 * 1.08) / rows;
   const lobeRadiusBase = Math.max(cellW, cellH);
@@ -613,7 +628,7 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
       const v = maskCenterV + gv + rngRange(rng, -cellH * 0.4, cellH * 0.4);
       const edge = insideMask(u, v);
       if (edge < -0.08) continue;
-      lobeCenters.push({ u, v, radius: lobeRadiusBase * rngRange(rng, 0.62, 0.88), edge });
+      lobeCenters.push({ u, v, radius: lobeRadiusBase * rngRange(rng, 0.95, 1.3), edge });
     }
   }
 
@@ -627,9 +642,24 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
     const isEdgeLobe = lobe.edge < 0.32;
     const radius = lobe.radius * (isEdgeLobe ? rngRange(rng, 1.05, 1.18) : 1);
 
-    // Macro dab: the lobe's own soft rounded base. Kept in a low densityKey band
-    // (0..0.55) so the overall silhouette survives even at spring/autumn's reduced
-    // density — only the fine surface texture thins out, not the shape itself.
+    // Opaque base fill: guarantees full coverage under the textured dabs below,
+    // so nothing but this lobe's own soft edge ever shows the trunk through —
+    // see CanopyDab.isBase's doc comment. Oversized (1.4x) so neighboring lobes'
+    // base fills overlap generously even at this grid's spacing.
+    dabs.push({
+      u: lobe.u,
+      v: lobe.v,
+      radius: radius * 1.4,
+      densityKey: rng() * 0.55,
+      tierIndex: tierForBrightness(heightBrightness(lobe.v) * rngRange(rng, 0.97, 1.03)),
+      rotation: 0,
+      isBase: true,
+    });
+
+    // Macro dab: the lobe's own soft rounded texture on top of the base fill.
+    // Kept in the same low densityKey band as the base so the overall silhouette
+    // survives even at spring/autumn's reduced density — only the fine surface
+    // texture thins out, not the shape itself.
     dabs.push({
       u: lobe.u,
       v: lobe.v,
@@ -637,9 +667,10 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
       densityKey: rng() * 0.55,
       tierIndex: tierForBrightness(heightBrightness(lobe.v) * rngRange(rng, 0.95, 1.05)),
       rotation: rngRange(rng, 0, Math.PI * 2),
+      isBase: false,
     });
 
-    const fineCount = 42;
+    const fineCount = 30;
     const spread = isEdgeLobe ? 0.92 : 1.08;
     for (let i = 0; i < fineCount; i++) {
       const angle = rngRange(rng, 0, Math.PI * 2);
@@ -650,10 +681,11 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
       dabs.push({
         u: lobe.u + du,
         v: lobe.v + dv,
-        radius: rngRange(rng, 0.14, 0.34) * radius,
+        radius: rngRange(rng, 0.16, 0.36) * radius,
         densityKey: rng(),
         tierIndex: tierForBrightness(brightness),
         rotation: rngRange(rng, 0, Math.PI * 2),
+        isBase: false,
       });
     }
   }
@@ -664,7 +696,7 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
   // reads as an airbrushed sphere; distinct sparkle points read as sunlight caught
   // on real texture.
   const topTier = BRIGHTNESS_TIERS.length - 1;
-  const sparkleCount = Math.round(lobeCenters.length * 0.6);
+  const sparkleCount = Math.round(lobeCenters.length * 0.35);
   for (let i = 0; i < sparkleCount; i++) {
     const lobe = lobeCenters[Math.floor(rng() * lobeCenters.length)];
     if (!lobe) continue;
@@ -680,6 +712,7 @@ function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
       densityKey: rng() * 0.85,
       tierIndex: topTier,
       rotation: rngRange(rng, 0, Math.PI * 2),
+      isBase: false,
     });
   }
 
@@ -716,6 +749,7 @@ function bakeCanopyTexture(
   dabs: CanopyDab[],
   density: number,
   tierSprites: HTMLCanvasElement[],
+  tierRgb: string[],
   bounds: CanopyBounds,
 ): THREE.CanvasTexture {
   const canvasWidth = Math.max(32, Math.round(bounds.planeWidth * PIXELS_PER_WORLD_UNIT));
@@ -725,11 +759,33 @@ function bakeCanopyTexture(
   canvas.height = canvasHeight;
   const ctx = canvas.getContext('2d')!;
 
+  const toPx = (dab: CanopyDab): [number, number, number] => [
+    (dab.u - bounds.uMid + bounds.planeWidth / 2) * PIXELS_PER_WORLD_UNIT,
+    (bounds.planeHeight / 2 - (dab.v - bounds.vMid)) * PIXELS_PER_WORLD_UNIT,
+    dab.radius * PIXELS_PER_WORLD_UNIT,
+  ];
+
+  // Base pass first, entirely separate from the textured pass below: every base
+  // dab must be solid before anything else is drawn, or a later base dab could
+  // still paint over — and partially reveal through alpha blending — an earlier
+  // textured dab's soft edge. See CanopyDab.isBase's doc comment.
   for (const dab of dabs) {
-    if (dab.densityKey >= density) continue;
-    const px = (dab.u - bounds.uMid + bounds.planeWidth / 2) * PIXELS_PER_WORLD_UNIT;
-    const py = (bounds.planeHeight / 2 - (dab.v - bounds.vMid)) * PIXELS_PER_WORLD_UNIT;
-    const pr = dab.radius * PIXELS_PER_WORLD_UNIT;
+    if (!dab.isBase || dab.densityKey >= density) continue;
+    const [px, py, pr] = toPx(dab);
+    const gradient = ctx.createRadialGradient(px, py, 0, px, py, pr);
+    const rgb = tierRgb[dab.tierIndex];
+    gradient.addColorStop(0, `rgba(${rgb},1)`);
+    gradient.addColorStop(0.72, `rgba(${rgb},1)`);
+    gradient.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const dab of dabs) {
+    if (dab.isBase || dab.densityKey >= density) continue;
+    const [px, py, pr] = toPx(dab);
     // Rotating each stamp independently turns the handful of base sprites (each
     // itself an asymmetric multi-lobe cluster, not a circle) into effectively
     // unlimited apparent variety instead of visibly repeating a stamp pattern.
@@ -796,11 +852,15 @@ export function createTree(seed = 20260809, densityLevels: number[] = [1]): Tree
   const dabs = buildCanopyDabs(rng, skeleton.tips);
   const bounds = computeCanopyBounds(dabs);
   const tierSprites = COLOR_TIERS.map((hex, i) => createTierSprite(hex, seed + i + 1));
+  const tierRgb = COLOR_TIERS.map((hex) => {
+    const c = new THREE.Color(hex);
+    return `${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)}`;
+  });
 
   const distinctDensities = [...new Set(densityLevels)];
   const canopyTextures: CanopyTextureVariant[] = distinctDensities.map((density) => ({
     density,
-    texture: bakeCanopyTexture(dabs, density, tierSprites, bounds),
+    texture: bakeCanopyTexture(dabs, density, tierSprites, tierRgb, bounds),
   }));
 
   // Unlit on purpose: a physically-lit material darkens toward whichever season's

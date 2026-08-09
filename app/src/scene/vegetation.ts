@@ -89,9 +89,12 @@ export function createVegetation(seed = 71): VegetationHandle {
       swayPhase: rngRange(rng, 0, Math.PI * 2),
       swayAmplitude: rngRange(rng, 0.7, 1.3),
     });
-    // Slight per-blade tonal jitter so the patch reads as many individual
-    // blades rather than one uniform-green instanced mass.
-    instColor.setHSL(0.28 + rngRange(rng, -0.025, 0.025), 0.5, rngRange(rng, 0.42, 0.58));
+    // Slight per-blade brightness jitter so the patch reads as many individual
+    // blades rather than one uniform mass — grayscale only, like the vertex
+    // gradient above: a fixed saturated hue here would fight the season's actual
+    // tint (material.color), e.g. staining winter's pale grass green.
+    const shade = rngRange(rng, 0.78, 1.12);
+    instColor.setRGB(shade, shade, shade);
     mesh.setColorAt(built, instColor);
     built++;
   }
