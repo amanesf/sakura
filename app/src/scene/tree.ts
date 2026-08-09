@@ -13,18 +13,30 @@ export interface CanopyInstanceBase {
   rotationY: number;
   baseScale: number;
   /** Stable random 0..1 used to decide, at a given season density, whether this
-   *  instance is one of the "kept" ones — see `applyCanopyState` below. */
+   *  instance is one of the "kept" ones — see `updateCanopyInstances` below. */
   densityKey: number;
+  /** Random phase so canopy clusters don't all flutter in lockstep. */
+  swayPhase: number;
+}
+
+export interface TreeSeasonState {
+  density: number;
+  scale: number;
 }
 
 export interface TreeHandle {
   group: THREE.Group;
   trunkMesh: THREE.Mesh;
   trunkMaterial: THREE.MeshStandardMaterial;
+  trunkSwayUniforms: { uTime: { value: number }; uFieldStrength: { value: number } };
   canopyMesh: THREE.InstancedMesh;
   canopyMaterial: THREE.MeshStandardMaterial;
   canopyInstances: CanopyInstanceBase[];
   tips: TreeTip[];
+  /** Latest season target for the canopy; mutated by `setCanopySeasonState`, read
+   *  every frame by `updateTreeAnimation`. Keeps "what season" (依頼A') separate
+   *  from "how it moves right now" (依頼B). */
+  seasonState: TreeSeasonState;
 }
 
 interface BranchSegment {
@@ -33,6 +45,7 @@ interface BranchSegment {
   length: number;
   radiusStart: number;
   radiusEnd: number;
+  depth: number;
 }
 
 // One recursive branch factor per depth level: trunk splits into a few main scaffold
@@ -75,7 +88,7 @@ function buildBranchSegments(rng: Rng): { segments: BranchSegment[]; tips: TreeT
   ) => {
     const radiusEnd = radiusStart * rngRange(rng, 0.68, 0.78);
     const end = start.clone().addScaledVector(direction, length);
-    segments.push({ start, direction, length, radiusStart, radiusEnd });
+    segments.push({ start, direction, length, radiusStart, radiusEnd, depth });
 
     const isTip = depth >= MAX_DEPTH || radiusEnd < 0.018;
     if (isTip) {
@@ -120,15 +133,25 @@ function segmentToGeometry(segment: BranchSegment): THREE.BufferGeometry {
   const quaternion = new THREE.Quaternion().setFromUnitVectors(UP, segment.direction);
   geometry.applyQuaternion(quaternion);
   geometry.translate(segment.start.x, segment.start.y, segment.start.z);
+
+  // Baked per-vertex sway susceptibility for the time-field shader (依頼B, §4):
+  // 0 at the trunk root, ramping toward 1 at the outermost twigs, so thick scaffold
+  // branches barely move while thin tips flutter — see the vertex shader patch in
+  // createTree() for how this is consumed.
+  const swayWeight = segment.depth / MAX_DEPTH;
+  const vertexCount = geometry.attributes.position.count;
+  geometry.setAttribute(
+    'swayWeight',
+    new THREE.Float32BufferAttribute(new Float32Array(vertexCount).fill(swayWeight), 1),
+  );
+
   return geometry;
 }
 
 /**
  * Procedural single-tree generator. Blender's Sapling Tree Gen (see
  * agent-workflow-policy.md §10-A) was considered but the environment has no Blender
- * pilot verified yet, so branch geometry is authored directly here; the trunk/canopy
- * split below is what a future VAT-driven sway pass (依頼B) would swap in a wind
- * texture for.
+ * pilot verified yet, so branch geometry is authored directly here.
  */
 export function createTree(seed = 20260809): TreeHandle {
   const rng = mulberry32(seed);
@@ -141,11 +164,38 @@ export function createTree(seed = 20260809): TreeHandle {
   if (!trunkGeometry) throw new Error('failed to merge tree branch geometry');
   trunkGeometry.computeVertexNormals();
 
+  const trunkSwayUniforms = {
+    uTime: { value: 0 },
+    uFieldStrength: { value: 0 },
+  };
   const trunkMaterial = new THREE.MeshStandardMaterial({
     color: '#4b3a2f',
     roughness: 0.95,
     metalness: 0,
   });
+  // Hierarchical branch sway (season-transition-animation.md §4 table, row 1): a
+  // slow wide sweep scaled by swayWeight, plus a faster small flutter scaled by
+  // swayWeight² so it only really shows up at the thin tips — an approximation of
+  // "太い枝はゆっくり大きく、細い枝先は小刻みに揺れる" without a full hierarchical
+  // bone/lever simulation (agent-workflow-policy.md §2 flags this class of work as
+  // Opus-tier; this is the first-pass shape, exact damping curves are later polish).
+  trunkMaterial.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, trunkSwayUniforms);
+    shader.vertexShader =
+      `attribute float swayWeight;\nuniform float uTime;\nuniform float uFieldStrength;\n` +
+      shader.vertexShader;
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      {
+        float sw = swayWeight;
+        float slow = sin(uTime * 1.1 + sw * 2.3) * sw * 0.22;
+        float fast = sin(uTime * 4.3 + sw * 6.1) * sw * sw * 0.06;
+        transformed.x += (slow + fast) * uFieldStrength;
+        transformed.z += cos(uTime * 0.9 + sw * 2.6) * sw * 0.16 * uFieldStrength;
+      }`,
+    );
+  };
   const trunkMesh = new THREE.Mesh(trunkGeometry, trunkMaterial);
   trunkMesh.castShadow = true;
   trunkMesh.receiveShadow = true;
@@ -179,7 +229,15 @@ export function createTree(seed = 20260809): TreeHandle {
       const rotationX = rngRange(rng, 0, Math.PI);
       const rotationY = rngRange(rng, 0, Math.PI);
       const densityKey = rng();
-      canopyInstances.push({ position, rotationX, rotationY, baseScale, densityKey });
+      const swayPhase = rngRange(rng, 0, Math.PI * 2);
+      canopyInstances.push({
+        position,
+        rotationX,
+        rotationY,
+        baseScale,
+        densityKey,
+        swayPhase,
+      });
 
       const shade = rngRange(rng, 0.82, 1.15);
       shadeColor.setScalar(shade);
@@ -192,42 +250,68 @@ export function createTree(seed = 20260809): TreeHandle {
   const group = new THREE.Group();
   group.add(trunkMesh, canopyMesh);
 
-  applyCanopyState(canopyMesh, canopyInstances, 1, 1);
+  const seasonState: TreeSeasonState = { density: 1, scale: 1 };
+  updateCanopyInstances(canopyMesh, canopyInstances, seasonState, 0, 0);
 
   return {
     group,
     trunkMesh,
     trunkMaterial,
+    trunkSwayUniforms,
     canopyMesh,
     canopyMaterial,
     canopyInstances,
     tips,
+    seasonState,
   };
 }
 
 const canopyDummy = new THREE.Object3D();
 
 /**
- * Owned here (alongside the instance data it rebuilds) but driven by the season
- * system (依頼A'): `density` is the fraction of instances kept visible and `scale`
- * is a uniform size multiplier on top of each instance's own baked variance. Using
- * each instance's stable `densityKey` instead of re-rolling randomness means the
- * canopy fills in/thins out smoothly as density changes instead of flickering.
+ * Rebuilds every canopy instance matrix from its baked base transform plus the
+ * current season density/scale (依頼A') and a time-field-driven flutter (依頼B).
+ * Called every frame; ~a few hundred to ~1000 instances is cheap on the Pixel 10 Pro
+ * target (season-transition-animation.md §13 — no lower-end fallback needed).
  */
-export function applyCanopyState(
+export function updateCanopyInstances(
   canopyMesh: THREE.InstancedMesh,
   instances: CanopyInstanceBase[],
-  density: number,
-  scale: number,
+  seasonState: TreeSeasonState,
+  time: number,
+  fieldStrength: number,
 ): void {
+  const { density, scale } = seasonState;
   for (let i = 0; i < instances.length; i++) {
     const inst = instances[i];
     const visible = inst.densityKey < density;
-    canopyDummy.position.copy(inst.position);
+
+    const swayX = Math.sin(time * 1.6 + inst.swayPhase) * 0.055 * fieldStrength;
+    const swayY = Math.sin(time * 2.1 + inst.swayPhase * 1.3) * 0.02 * fieldStrength;
+    const swayZ = Math.cos(time * 1.4 + inst.swayPhase * 0.7) * 0.055 * fieldStrength;
+
+    canopyDummy.position.set(
+      inst.position.x + swayX,
+      inst.position.y + swayY,
+      inst.position.z + swayZ,
+    );
     canopyDummy.rotation.set(inst.rotationX, inst.rotationY, 0);
     canopyDummy.scale.setScalar(visible ? inst.baseScale * scale : 0);
     canopyDummy.updateMatrix();
     canopyMesh.setMatrixAt(i, canopyDummy.matrix);
   }
   canopyMesh.instanceMatrix.needsUpdate = true;
+}
+
+/** Called by the season system (依頼A') whenever the dial moves to a new blend. */
+export function setCanopySeasonState(tree: TreeHandle, density: number, scale: number): void {
+  tree.seasonState.density = density;
+  tree.seasonState.scale = scale;
+}
+
+/** Called every frame by the render loop (依頼B) to animate trunk + canopy sway. */
+export function updateTreeAnimation(tree: TreeHandle, time: number, fieldStrength: number): void {
+  tree.trunkSwayUniforms.uTime.value = time;
+  tree.trunkSwayUniforms.uFieldStrength.value = fieldStrength;
+  updateCanopyInstances(tree.canopyMesh, tree.canopyInstances, tree.seasonState, time, fieldStrength);
 }

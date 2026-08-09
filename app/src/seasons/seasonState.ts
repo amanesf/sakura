@@ -38,6 +38,11 @@ export interface SeasonVisualParams {
   groundColor: THREE.Color;
   farShoreColor: THREE.Color;
 
+  /** Foreground shore vegetation (scene/vegetation.ts). */
+  vegetationColor: THREE.Color;
+  vegetationDensity: number;
+  vegetationHeight: number;
+
   /** Lake (Reflector tint, multiplies the mirrored scene). */
   lakeTint: THREE.Color;
 
@@ -75,6 +80,7 @@ type SeasonKeyframeInput = Omit<
   | 'canopyColor'
   | 'groundColor'
   | 'farShoreColor'
+  | 'vegetationColor'
   | 'lakeTint'
   | 'skyTop'
   | 'skyHorizon'
@@ -89,6 +95,7 @@ type SeasonKeyframeInput = Omit<
   canopyColor: string;
   groundColor: string;
   farShoreColor: string;
+  vegetationColor: string;
   lakeTint: string;
   skyTop: string;
   skyHorizon: string;
@@ -117,6 +124,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#8a8378',
     groundColor: '#dfe8ee',
     farShoreColor: '#c7d3da',
+    vegetationColor: '#e5eef2',
+    vegetationDensity: 0.6,
+    vegetationHeight: 0.5,
     lakeTint: '#9fb9c9',
     skyTop: '#9fc3e8',
     skyHorizon: '#e8f1f7',
@@ -143,6 +153,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#f3b6c9',
     groundColor: '#8fbf6a',
     farShoreColor: '#7fae5c',
+    vegetationColor: '#d9c25a',
+    vegetationDensity: 0.95,
+    vegetationHeight: 0.35,
     lakeTint: '#bcd6e0',
     skyTop: '#8fc7f2',
     skyHorizon: '#fdf1f2',
@@ -169,6 +182,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#f0a8c0',
     groundColor: '#c8a2ac',
     farShoreColor: '#84a563',
+    vegetationColor: '#d9a9ab',
+    vegetationDensity: 0.9,
+    vegetationHeight: 0.35,
     lakeTint: '#c3d8df',
     skyTop: '#8fc7f2',
     skyHorizon: '#fbeef0',
@@ -195,6 +211,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#3f9a4a',
     groundColor: '#4f9b3d',
     farShoreColor: '#3f8a38',
+    vegetationColor: '#3f8a35',
+    vegetationDensity: 1.0,
+    vegetationHeight: 0.9,
     lakeTint: '#2f7fa0',
     skyTop: '#3f8fe0',
     skyHorizon: '#bfe3f7',
@@ -221,6 +240,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#d9622a',
     groundColor: '#b98a3f',
     farShoreColor: '#a97a35',
+    vegetationColor: '#c9b98a',
+    vegetationDensity: 0.8,
+    vegetationHeight: 0.85,
     lakeTint: '#c98a5c',
     skyTop: '#e8a15c',
     skyHorizon: '#ffd9a0',
@@ -247,6 +269,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyColor: '#b8551f',
     groundColor: '#9c6a2f',
     farShoreColor: '#8a5f2c',
+    vegetationColor: '#b09a6a',
+    vegetationDensity: 0.7,
+    vegetationHeight: 0.75,
     lakeTint: '#b57a52',
     skyTop: '#d98f52',
     skyHorizon: '#f2c48a',
@@ -273,6 +298,7 @@ function toParams(input: SeasonKeyframeInput): SeasonVisualParams {
     canopyColor: new THREE.Color(input.canopyColor),
     groundColor: new THREE.Color(input.groundColor),
     farShoreColor: new THREE.Color(input.farShoreColor),
+    vegetationColor: new THREE.Color(input.vegetationColor),
     lakeTint: new THREE.Color(input.lakeTint),
     skyTop: new THREE.Color(input.skyTop),
     skyHorizon: new THREE.Color(input.skyHorizon),

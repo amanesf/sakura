@@ -1,12 +1,14 @@
 /**
  * Shared contract for the "time field" that drives all ambient sway and the
- * petal/leaf detach-and-fall transition (season-transition-animation.md §4). This is
- * fixed early per agent-workflow-policy.md §5 so downstream subsystems can code
- * against the final shape of the API before it has a real implementation.
+ * petal/leaf detach-and-fall transition (season-transition-animation.md §4). Fixed
+ * early per agent-workflow-policy.md §5 so downstream subsystems can code against a
+ * stable API.
  *
- * 依頼B owns the real time-varying field (ambient idle sway + transition-wave spikes).
- * Until then, `sampleBaselineTimeField` returns a stable low value so 依頼C/D/E can
- * already consume this module.
+ * `sampleTimeField` (依頼B) is the ambient idle component: always-on, low-level
+ * wobble (§4 "フィールド強度は常に低いレベルで有効"). 依頼D's transition wave and
+ * 依頼E's shedding climax both layer temporary spikes on top of this baseline by
+ * summing into the same `strength` value — they are not implemented yet, so today
+ * the field never exceeds its idle range.
  */
 export interface TimeFieldState {
   /** Ambient sway strength, roughly 0..1 (can briefly exceed 1 during transition-wave
@@ -34,7 +36,13 @@ export function resolveLeafMotionState(
   return fieldStrength + instanceDetachBias > LEAF_DETACH_THRESHOLD ? 'falling' : 'attached';
 }
 
-/** Placeholder source until 依頼B implements the real spatial/temporal field. */
-export function sampleBaselineTimeField(): TimeFieldState {
-  return { strength: TIME_FIELD_BASELINE };
+/**
+ * Ambient idle field: a slow drift plus a slightly faster secondary ripple so the
+ * baseline itself breathes instead of sitting at a dead-flat constant. Spatial
+ * variation (the wave actually sweeping across the screen) is 依頼D's job — this is
+ * the temporal-only component every layer reads at rest.
+ */
+export function sampleTimeField(elapsedSeconds: number): TimeFieldState {
+  const drift = Math.sin(elapsedSeconds * 0.17) * 0.05 + Math.sin(elapsedSeconds * 0.053 + 1.3) * 0.03;
+  return { strength: Math.max(0, TIME_FIELD_BASELINE + drift) };
 }
