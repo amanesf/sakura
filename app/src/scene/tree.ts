@@ -243,7 +243,7 @@ export function createTree(seed = 20260809): TreeHandle {
     canopyRadius = Math.max(canopyRadius, tip.position.distanceTo(canopyCenter));
   }
   const canopyFillMesh = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(canopyRadius * 0.48, 2),
+    new THREE.IcosahedronGeometry(canopyRadius * 0.58, 3),
     canopyMaterial,
   );
   canopyFillMesh.position.copy(canopyCenter);
@@ -254,7 +254,7 @@ export function createTree(seed = 20260809): TreeHandle {
   let instanceIndex = 0;
   for (const tip of tips) {
     for (let i = 0; i < LEAVES_PER_TIP; i++) {
-      const jitterRadius = rngRange(rng, 0.05, 0.34);
+      const jitterRadius = rngRange(rng, 0.04, 0.26);
       const jitterDir = new THREE.Vector3(
         rngRange(rng, -1, 1),
         rngRange(rng, -1, 1),
