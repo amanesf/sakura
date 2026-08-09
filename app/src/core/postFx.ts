@@ -38,8 +38,15 @@ export function createPostFx(
   );
   composer.addPass(bloomPass);
 
+  // Always enabled, parked at uProgress=1 (a verified no-op — see
+  // transitionWaveShader.ts's fadeOut term) rather than toggling `.enabled`. Three.js
+  // compiles a ShaderPass's program lazily on first render; toggling it on only at
+  // the first real transition meant that compile happened mid-scene, at the same
+  // moment canopy density/instance count jumps for the new season — suspected cause
+  // of a mobile GPU context loss the first time a transition ever fired. Keeping it
+  // warm from frame one avoids stacking a first-time shader compile on top of that.
   const wavePass = new ShaderPass(TransitionWaveShader);
-  wavePass.enabled = false;
+  wavePass.uniforms.uProgress.value = 1;
   composer.addPass(wavePass);
 
   const gradePass = new ShaderPass(GradeShader);
@@ -55,8 +62,10 @@ export function createPostFx(
   };
 
   const updateWave = (wave: ActiveWave | null, time: number) => {
-    wavePass.enabled = wave !== null;
-    if (!wave) return;
+    if (!wave) {
+      wavePass.uniforms.uProgress.value = 1;
+      return;
+    }
     wavePass.uniforms.uProgress.value = wave.progress;
     wavePass.uniforms.uColor.value.copy(getWaveColor(wave.toIndex));
     wavePass.uniforms.uTime.value = time;

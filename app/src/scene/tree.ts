@@ -210,7 +210,7 @@ export function createTree(seed = 20260809): TreeHandle {
   // scattering through thin petals — an additive, not multiplicative, brightening,
   // so it still reads in shadowed parts of the canopy.
   canopyMaterial.onBeforeCompile = (shader) => {
-    shader.uniforms.uRimStrength = { value: 1.1 };
+    shader.uniforms.uRimStrength = { value: 0.7 };
     shader.fragmentShader = `uniform float uRimStrength;\n${shader.fragmentShader}`;
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <emissivemap_fragment>',
@@ -271,9 +271,13 @@ export function createTree(seed = 20260809): TreeHandle {
         swayPhase,
       });
 
-      // Wide brightness spread (some clusters near-white, some deeper-toned) reads
-      // as varied petal clumps instead of one flat color repeated everywhere.
-      const shade = rngRange(rng, 0.7, 1.55);
+      // Brightness spread (some clusters near-white, some deeper-toned) reads as
+      // varied petal clumps instead of one flat color repeated everywhere. Capped
+      // moderately — combined with the rim-light emissive term and bloom, values
+      // much above 1 here pushed peak pixel brightness high enough to be a
+      // suspected contributor to a mobile GPU crash right as spring's canopy (high
+      // density, unlike winter's near-empty one) lit up for the first time.
+      const shade = rngRange(rng, 0.75, 1.2);
       shadeColor.setScalar(shade);
       canopyMesh.setColorAt(instanceIndex, shadeColor);
       instanceIndex++;
