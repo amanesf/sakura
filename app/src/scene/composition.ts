@@ -5,6 +5,7 @@ import { createLake, type LakeHandle } from './lake';
 import { createGround, type GroundHandle } from './ground';
 import { createTree, type TreeHandle } from './tree';
 import { createVegetation, type VegetationHandle } from './vegetation';
+import { createSheddingParticles, type SheddingHandle } from './sheddingParticles';
 
 export interface Lights {
   sun: THREE.DirectionalLight;
@@ -19,6 +20,7 @@ export interface Composition {
   ground: GroundHandle;
   tree: TreeHandle;
   vegetation: VegetationHandle;
+  shedding: SheddingHandle;
   lights: Lights;
 }
 
@@ -51,6 +53,9 @@ export function createComposition(): Composition {
   const vegetation = createVegetation();
   scene.add(vegetation.mesh);
 
+  const shedding = createSheddingParticles();
+  scene.add(shedding.mesh);
+
   const sun = new THREE.DirectionalLight('#fff3e0', 2.4);
   sun.position.set(-8, 14, 6);
   sun.castShadow = true;
@@ -67,5 +72,5 @@ export function createComposition(): Composition {
   const hemi = new THREE.HemisphereLight('#bfe2ff', '#5b6d55', 0.85);
   scene.add(hemi);
 
-  return { scene, sky, mountains, lake, ground, tree, vegetation, lights: { sun, hemi } };
+  return { scene, sky, mountains, lake, ground, tree, vegetation, shedding, lights: { sun, hemi } };
 }

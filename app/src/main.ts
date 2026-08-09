@@ -8,6 +8,7 @@ import { applySeasonState } from './seasons/applySeasonState';
 import { sampleTimeField } from './core/timeField';
 import { updateTreeAnimation } from './scene/tree';
 import { updateVegetationAnimation } from './scene/vegetation';
+import { updateSheddingAnimation } from './scene/sheddingParticles';
 import { updateLake } from './scene/lake';
 import { TimeMachineDial } from './ui/dial';
 import { SceneTransitionController } from './seasons/sceneTransition';
@@ -75,6 +76,7 @@ function renderLoop() {
   const { strength: fieldStrength } = sampleTimeField(elapsed);
   updateTreeAnimation(composition.tree, elapsed, fieldStrength);
   updateVegetationAnimation(composition.vegetation, elapsed, fieldStrength);
+  updateSheddingAnimation(composition.shedding, elapsed, fieldStrength);
   updateLake(composition.lake, elapsed, fieldStrength);
 
   postFx.updateWave(wave, elapsed);

@@ -43,6 +43,12 @@ export interface SeasonVisualParams {
   vegetationDensity: number;
   vegetationHeight: number;
 
+  /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉.
+   *  0 outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
+   *  gearing for why this is a multiplier rather than a plain on/off flag. */
+  sheddingColor: THREE.Color;
+  sheddingSensitivity: number;
+
   /** Lake (Reflector tint, multiplies the mirrored scene). */
   lakeTint: THREE.Color;
 
@@ -81,6 +87,7 @@ type SeasonKeyframeInput = Omit<
   | 'groundColor'
   | 'farShoreColor'
   | 'vegetationColor'
+  | 'sheddingColor'
   | 'lakeTint'
   | 'skyTop'
   | 'skyHorizon'
@@ -96,6 +103,7 @@ type SeasonKeyframeInput = Omit<
   groundColor: string;
   farShoreColor: string;
   vegetationColor: string;
+  sheddingColor: string;
   lakeTint: string;
   skyTop: string;
   skyHorizon: string;
@@ -127,6 +135,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#e5eef2',
     vegetationDensity: 0.6,
     vegetationHeight: 0.5,
+    sheddingColor: '#e8ecf0',
+    sheddingSensitivity: 0,
     lakeTint: '#9fb9c9',
     skyTop: '#9fc3e8',
     skyHorizon: '#e8f1f7',
@@ -156,6 +166,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#d9c25a',
     vegetationDensity: 0.95,
     vegetationHeight: 0.35,
+    sheddingColor: '#f6c3d6',
+    sheddingSensitivity: 0,
     lakeTint: '#bcd6e0',
     skyTop: '#8fc7f2',
     skyHorizon: '#fdf1f2',
@@ -185,6 +197,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#d9a9ab',
     vegetationDensity: 0.9,
     vegetationHeight: 0.35,
+    sheddingColor: '#f4a3c4',
+    sheddingSensitivity: 4.6,
     lakeTint: '#c3d8df',
     skyTop: '#8fc7f2',
     skyHorizon: '#fbeef0',
@@ -214,6 +228,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#3f8a35',
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
+    sheddingColor: '#ffffff',
+    sheddingSensitivity: 0,
     lakeTint: '#2f7fa0',
     skyTop: '#3f8fe0',
     skyHorizon: '#bfe3f7',
@@ -243,6 +259,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#c9b98a',
     vegetationDensity: 0.8,
     vegetationHeight: 0.85,
+    sheddingColor: '#e8a15c',
+    sheddingSensitivity: 0,
     lakeTint: '#c98a5c',
     skyTop: '#e8a15c',
     skyHorizon: '#ffd9a0',
@@ -272,6 +290,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#b09a6a',
     vegetationDensity: 0.7,
     vegetationHeight: 0.75,
+    sheddingColor: '#c9702f',
+    sheddingSensitivity: 4.6,
     lakeTint: '#b57a52',
     skyTop: '#d98f52',
     skyHorizon: '#f2c48a',
@@ -299,6 +319,7 @@ function toParams(input: SeasonKeyframeInput): SeasonVisualParams {
     groundColor: new THREE.Color(input.groundColor),
     farShoreColor: new THREE.Color(input.farShoreColor),
     vegetationColor: new THREE.Color(input.vegetationColor),
+    sheddingColor: new THREE.Color(input.sheddingColor),
     lakeTint: new THREE.Color(input.lakeTint),
     skyTop: new THREE.Color(input.skyTop),
     skyHorizon: new THREE.Color(input.skyHorizon),

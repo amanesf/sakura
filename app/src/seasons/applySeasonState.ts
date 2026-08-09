@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Composition } from '../scene/composition';
 import { setCanopySeasonState } from '../scene/tree';
 import { setVegetationSeasonState } from '../scene/vegetation';
+import { setSheddingSeasonState } from '../scene/sheddingParticles';
 import type { SeasonVisualParams } from './seasonState';
 
 const SUN_DISTANCE = 22;
@@ -15,13 +16,16 @@ const sunOffset = new THREE.Vector3();
  * *which* dial position/blend to sample, never touch these materials directly.
  */
 export function applySeasonState(composition: Composition, params: SeasonVisualParams): void {
-  const { tree, vegetation, lake, ground, mountains, sky, lights, scene } = composition;
+  const { tree, vegetation, shedding, lake, ground, mountains, sky, lights, scene } = composition;
 
   tree.canopyMaterial.color.copy(params.canopyColor);
   setCanopySeasonState(tree, params.canopyDensity, params.canopyScale);
 
   vegetation.material.color.copy(params.vegetationColor);
   setVegetationSeasonState(vegetation, params.vegetationDensity, params.vegetationHeight);
+
+  shedding.material.color.copy(params.sheddingColor);
+  setSheddingSeasonState(shedding, params.sheddingSensitivity);
 
   ground.nearShoreMaterial.color.copy(params.groundColor);
   ground.farShoreMaterial.color.copy(params.farShoreColor);
