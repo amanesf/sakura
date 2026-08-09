@@ -31,6 +31,7 @@ export interface TreeHandle {
   trunkSwayUniforms: { uTime: { value: number }; uFieldStrength: { value: number } };
   canopyMesh: THREE.InstancedMesh;
   canopyMaterial: THREE.MeshStandardMaterial;
+  canopyFillMesh: THREE.Mesh;
   canopyInstances: CanopyInstanceBase[];
   tips: TreeTip[];
   /** Latest season target for the canopy; mutated by `setCanopySeasonState`, read
@@ -52,7 +53,7 @@ interface BranchSegment {
 // limbs, then each of those forks repeatedly into a bushier fan for the canopy.
 const BRANCH_COUNTS = [1, 3, 2, 2, 2, 2, 2];
 const MAX_DEPTH = BRANCH_COUNTS.length - 1;
-const LEAVES_PER_TIP = 10;
+const LEAVES_PER_TIP = 16;
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -200,12 +201,28 @@ export function createTree(seed = 20260809): TreeHandle {
   trunkMesh.castShadow = true;
   trunkMesh.receiveShadow = true;
 
-  const canopyGeometry = new THREE.IcosahedronGeometry(0.26, 1);
+  const canopyGeometry = new THREE.IcosahedronGeometry(0.185, 2);
   const canopyMaterial = new THREE.MeshStandardMaterial({
     color: '#7abf56',
-    roughness: 0.75,
+    roughness: 0.7,
     metalness: 0,
   });
+  // Fake SSS rim light (proposal.md §4.2 "疑似SSS"): blossom/leaf clusters glow a
+  // little at grazing angles regardless of the key light direction, like light
+  // scattering through thin petals — an additive, not multiplicative, brightening,
+  // so it still reads in shadowed parts of the canopy.
+  canopyMaterial.onBeforeCompile = (shader) => {
+    shader.uniforms.uRimStrength = { value: 1.1 };
+    shader.fragmentShader = `uniform float uRimStrength;\n${shader.fragmentShader}`;
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <emissivemap_fragment>',
+      `#include <emissivemap_fragment>
+      {
+        float rimFresnel = pow(1.0 - clamp(dot(normalize(normal), normalize(vViewPosition)), 0.0, 1.0), 2.2);
+        totalEmissiveRadiance += diffuseColor.rgb * rimFresnel * uRimStrength;
+      }`,
+    );
+  };
   const canopyMesh = new THREE.InstancedMesh(
     canopyGeometry,
     canopyMaterial,
@@ -213,19 +230,38 @@ export function createTree(seed = 20260809): TreeHandle {
   );
   canopyMesh.castShadow = true;
 
+  // A single solid "fill" blob behind the instanced clusters, same material (so it
+  // always matches the current season color automatically). The hard instance
+  // spheres alone leave visible gaps between clusters; this fills them so the
+  // canopy reads as one continuous mass with the instances as surface texture on
+  // top of it, rather than a loose pile of balls.
+  const canopyCenter = new THREE.Vector3();
+  for (const tip of tips) canopyCenter.add(tip.position);
+  canopyCenter.divideScalar(tips.length);
+  let canopyRadius = 0;
+  for (const tip of tips) {
+    canopyRadius = Math.max(canopyRadius, tip.position.distanceTo(canopyCenter));
+  }
+  const canopyFillMesh = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(canopyRadius * 0.48, 2),
+    canopyMaterial,
+  );
+  canopyFillMesh.position.copy(canopyCenter);
+  canopyFillMesh.castShadow = true;
+
   const shadeColor = new THREE.Color();
   const canopyInstances: CanopyInstanceBase[] = [];
   let instanceIndex = 0;
   for (const tip of tips) {
     for (let i = 0; i < LEAVES_PER_TIP; i++) {
-      const jitterRadius = rngRange(rng, 0.08, 0.5);
+      const jitterRadius = rngRange(rng, 0.05, 0.34);
       const jitterDir = new THREE.Vector3(
         rngRange(rng, -1, 1),
         rngRange(rng, -1, 1),
         rngRange(rng, -1, 1),
       ).normalize();
       const position = tip.position.clone().addScaledVector(jitterDir, jitterRadius);
-      const baseScale = rngRange(rng, 0.6, 1.15);
+      const baseScale = rngRange(rng, 0.55, 1.1);
       const rotationX = rngRange(rng, 0, Math.PI);
       const rotationY = rngRange(rng, 0, Math.PI);
       const densityKey = rng();
@@ -239,7 +275,9 @@ export function createTree(seed = 20260809): TreeHandle {
         swayPhase,
       });
 
-      const shade = rngRange(rng, 0.82, 1.15);
+      // Wide brightness spread (some clusters near-white, some deeper-toned) reads
+      // as varied petal clumps instead of one flat color repeated everywhere.
+      const shade = rngRange(rng, 0.7, 1.55);
       shadeColor.setScalar(shade);
       canopyMesh.setColorAt(instanceIndex, shadeColor);
       instanceIndex++;
@@ -248,10 +286,11 @@ export function createTree(seed = 20260809): TreeHandle {
   if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
 
   const group = new THREE.Group();
-  group.add(trunkMesh, canopyMesh);
+  group.add(trunkMesh, canopyFillMesh, canopyMesh);
 
   const seasonState: TreeSeasonState = { density: 1, scale: 1 };
   updateCanopyInstances(canopyMesh, canopyInstances, seasonState, 0, 0);
+  applyCanopyFillScale(canopyFillMesh, seasonState);
 
   return {
     group,
@@ -260,10 +299,21 @@ export function createTree(seed = 20260809): TreeHandle {
     trunkSwayUniforms,
     canopyMesh,
     canopyMaterial,
+    canopyFillMesh,
     canopyInstances,
     tips,
     seasonState,
   };
+}
+
+/**
+ * The fill blob (see createTree above) has to shrink with the season's canopy
+ * density too, or a bare-winter tree ends up with an ugly solid gray ball where
+ * only a few stray instances should show — it's not itself gated by densityKey the
+ * way individual instances are, so it needs this explicit hookup.
+ */
+function applyCanopyFillScale(canopyFillMesh: THREE.Mesh, seasonState: TreeSeasonState): void {
+  canopyFillMesh.scale.setScalar(seasonState.density * seasonState.scale);
 }
 
 const canopyDummy = new THREE.Object3D();
@@ -307,6 +357,7 @@ export function updateCanopyInstances(
 export function setCanopySeasonState(tree: TreeHandle, density: number, scale: number): void {
   tree.seasonState.density = density;
   tree.seasonState.scale = scale;
+  applyCanopyFillScale(tree.canopyFillMesh, tree.seasonState);
 }
 
 /** Called every frame by the render loop (依頼B) to animate trunk + canopy sway. */

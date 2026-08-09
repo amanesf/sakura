@@ -8,8 +8,10 @@ import { applySeasonState } from './seasons/applySeasonState';
 import { sampleTimeField } from './core/timeField';
 import { updateTreeAnimation } from './scene/tree';
 import { updateVegetationAnimation } from './scene/vegetation';
+import { updateFlowerAnimation } from './scene/flowers';
 import { updateSheddingAnimation } from './scene/sheddingParticles';
 import { updateLake } from './scene/lake';
+import { updateSky } from './scene/sky';
 import { TimeMachineDial } from './ui/dial';
 import { SceneTransitionController } from './seasons/sceneTransition';
 import { createPostFx } from './core/postFx';
@@ -70,14 +72,15 @@ function renderLoop() {
   const params = sampleSeasonState(seasonIndex);
   applySeasonState(composition, params);
   renderer.toneMappingExposure = params.toneMappingExposure;
-  dial?.setLabel(params.label);
 
   // Time field (依頼B, §4): one ambient strength value driving every layer's sway.
   const { strength: fieldStrength } = sampleTimeField(elapsed);
   updateTreeAnimation(composition.tree, elapsed, fieldStrength);
   updateVegetationAnimation(composition.vegetation, elapsed, fieldStrength);
+  updateFlowerAnimation(composition.flowers, elapsed, fieldStrength);
   updateSheddingAnimation(composition.shedding, elapsed, fieldStrength);
   updateLake(composition.lake, elapsed, fieldStrength);
+  updateSky(composition.sky, elapsed);
 
   postFx.updateWave(wave, elapsed);
   postFx.render();

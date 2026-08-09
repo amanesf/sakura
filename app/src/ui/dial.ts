@@ -77,8 +77,6 @@ export class TimeMachineDial {
 
   private readonly svg: SVGSVGElement;
   private readonly hand: SVGPolygonElement;
-  private readonly label: HTMLDivElement;
-  private readonly modeLabel: HTMLDivElement;
 
   constructor() {
     this.element = document.createElement('div');
@@ -157,12 +155,7 @@ export class TimeMachineDial {
     hub.setAttribute('stroke-width', '0.6');
     this.svg.appendChild(hub);
 
-    this.label = document.createElement('div');
-    this.label.className = 'tm-dial-readout';
-    this.modeLabel = document.createElement('div');
-    this.modeLabel.className = 'tm-dial-mode';
-
-    this.element.append(this.svg, this.label, this.modeLabel);
+    this.element.append(this.svg);
 
     this.svg.addEventListener('pointerdown', this.onPointerDown);
     this.svg.addEventListener('pointermove', this.onPointerMove);
@@ -273,11 +266,5 @@ export class TimeMachineDial {
     if (this.autoMode) {
       this.setAngleFraction(this.angleFraction + dt / AUTO_LOOP_SECONDS);
     }
-    this.modeLabel.textContent = this.autoMode ? 'auto' : 'manual';
-  }
-
-  /** Call once per frame *after* sampling season state, with its label. */
-  setLabel(text: string): void {
-    this.label.textContent = text;
   }
 }

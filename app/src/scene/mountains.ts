@@ -78,8 +78,11 @@ export function createMountains(seed = 20260809): MountainsHandle {
   const layers: MountainLayer[] = [];
 
   const configs = [
-    { z: -30, width: 140, base: 12, jitter: 4, color: '#7f9a8e', bottomY: -4 },
-    { z: -48, width: 200, base: 17, jitter: 6, color: '#a3b9c0', bottomY: -4 },
+    // Near layer's base sits close to the far layer's so it occludes most of the
+    // far ridge's flat body, leaving only its jagged peaks poking above — otherwise
+    // the exposed far "wall" reads as a flat pale band instead of a mountain shape.
+    { z: -30, width: 140, base: 15, jitter: 4.5, color: '#7f9a8e', bottomY: -4 },
+    { z: -48, width: 200, base: 17.5, jitter: 6, color: '#a3b9c0', bottomY: -4 },
   ];
 
   for (const cfg of configs) {

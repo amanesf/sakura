@@ -3,8 +3,12 @@
   left: max(22px, env(safe-area-inset-left));
   bottom: max(16px, env(safe-area-inset-bottom));
   width: 140px;
-  padding: 10px 10px 10px;
+  height: 124px;
+  padding: 10px;
   border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: linear-gradient(155deg, #6b4f26 0%, #4a3618 55%, #2c2010 100%);
   border: 1px solid rgba(255, 214, 140, 0.25);
   box-shadow:
@@ -51,23 +55,4 @@
   fill: url(#tm-brass);
   stroke: #3a2810;
   stroke-width: 0.5;
-}
-
-.tm-dial-readout {
-  margin-top: 6px;
-  text-align: center;
-  color: #f3e6c8;
-  font-size: 11px;
-  letter-spacing: 0.03em;
-  line-height: 1.3;
-  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
-}
-
-.tm-dial-mode {
-  margin-top: 2px;
-  text-align: center;
-  color: rgba(243, 230, 200, 0.6);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }

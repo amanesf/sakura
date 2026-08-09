@@ -37,6 +37,8 @@ export interface SeasonVisualParams {
   vegetationColor: THREE.Color;
   vegetationDensity: number;
   vegetationHeight: number;
+  /** Scattered wildflower dots (scene/flowers.ts) — spring's "花畑" (§5), 0 elsewhere. */
+  flowerDensity: number;
 
   /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉.
    *  0 outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
@@ -130,6 +132,7 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#e5eef2',
     vegetationDensity: 0.6,
     vegetationHeight: 0.5,
+    flowerDensity: 0,
     sheddingColor: '#e8ecf0',
     sheddingSensitivity: 0,
     lakeTint: '#9fb9c9',
@@ -161,17 +164,18 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#d9c25a',
     vegetationDensity: 0.95,
     vegetationHeight: 0.35,
+    flowerDensity: 0.9,
     sheddingColor: '#f6c3d6',
     sheddingSensitivity: 0,
     lakeTint: '#bcd6e0',
-    skyTop: '#8fc7f2',
-    skyHorizon: '#fdf1f2',
+    skyTop: '#5fa8ea',
+    skyHorizon: '#cfe6ee',
     skyBottom: '#dcead2',
-    mountainNear: '#7f9a72',
-    mountainFar: '#a9c0be',
+    mountainNear: '#7d9a8c',
+    mountainFar: '#9fb7bd',
     fogColor: '#eef3ea',
-    fogNear: 26,
-    fogFar: 85,
+    fogNear: 30,
+    fogFar: 115,
     sunColor: '#fff2df',
     sunIntensity: 2.2,
     sunElevationDeg: 45,
@@ -192,6 +196,7 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#d9a9ab',
     vegetationDensity: 0.9,
     vegetationHeight: 0.35,
+    flowerDensity: 0.75,
     sheddingColor: '#f4a3c4',
     sheddingSensitivity: 4.6,
     lakeTint: '#c3d8df',
@@ -223,6 +228,7 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#3f8a35',
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
+    flowerDensity: 0,
     sheddingColor: '#ffffff',
     sheddingSensitivity: 0,
     lakeTint: '#2f7fa0',
@@ -258,6 +264,7 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationColor: '#bea87c',
     vegetationDensity: 0.75,
     vegetationHeight: 0.8,
+    flowerDensity: 0,
     sheddingColor: '#cf7a30',
     sheddingSensitivity: 4.6,
     lakeTint: '#c08059',

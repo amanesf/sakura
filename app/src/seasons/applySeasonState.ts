@@ -2,12 +2,23 @@ import * as THREE from 'three';
 import type { Composition } from '../scene/composition';
 import { setCanopySeasonState } from '../scene/tree';
 import { setVegetationSeasonState } from '../scene/vegetation';
+import { setFlowerSeasonState } from '../scene/flowers';
 import { setSheddingSeasonState } from '../scene/sheddingParticles';
-import type { SeasonVisualParams } from './seasonState';
+import type { SeasonId, SeasonVisualParams } from './seasonState';
 
 const SUN_DISTANCE = 22;
 const SUN_TARGET = new THREE.Vector3(0, 3, -2);
 const sunOffset = new THREE.Vector3();
+
+/** Sky cloud coverage per scene — clear and crisp in winter, fluffiest in spring
+ *  bloom (matching the reference art's soft high-key sky), thinning out by autumn. */
+const CLOUD_DENSITY: Record<SeasonId, number> = {
+  winter: 0.25,
+  springBloom: 0.6,
+  springFall: 0.5,
+  summer: 0.7,
+  autumn: 0.35,
+};
 
 /**
  * Pushes a sampled SeasonVisualParams (season-transition-animation.md §10) into every
@@ -16,13 +27,16 @@ const sunOffset = new THREE.Vector3();
  * *which* dial position/blend to sample, never touch these materials directly.
  */
 export function applySeasonState(composition: Composition, params: SeasonVisualParams): void {
-  const { tree, vegetation, shedding, lake, ground, mountains, sky, lights, scene } = composition;
+  const { tree, vegetation, flowers, shedding, lake, ground, mountains, sky, lights, scene } =
+    composition;
 
   tree.canopyMaterial.color.copy(params.canopyColor);
   setCanopySeasonState(tree, params.canopyDensity, params.canopyScale);
 
   vegetation.material.color.copy(params.vegetationColor);
   setVegetationSeasonState(vegetation, params.vegetationDensity, params.vegetationHeight);
+
+  setFlowerSeasonState(flowers, params.flowerDensity);
 
   shedding.material.color.copy(params.sheddingColor);
   setSheddingSeasonState(shedding, params.sheddingSensitivity);
@@ -35,6 +49,8 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
   sky.material.uniforms.uTopColor.value.copy(params.skyTop);
   sky.material.uniforms.uHorizonColor.value.copy(params.skyHorizon);
   sky.material.uniforms.uBottomColor.value.copy(params.skyBottom);
+  sky.material.uniforms.uSunColor.value.copy(params.sunColor);
+  sky.material.uniforms.uCloudDensity.value = CLOUD_DENSITY[params.id];
 
   mountains.layers[0].material.color.copy(params.mountainNear);
   mountains.layers[1].material.color.copy(params.mountainFar);
@@ -57,6 +73,7 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
   lights.sun.target.updateMatrixWorld();
   lights.sun.color.copy(params.sunColor);
   lights.sun.intensity = params.sunIntensity;
+  sky.material.uniforms.uSunDirection.value.copy(sunOffset);
 
   lights.hemi.color.copy(params.hemiSky);
   lights.hemi.groundColor.copy(params.hemiGround);
