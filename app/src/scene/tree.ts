@@ -7,12 +7,23 @@ export interface TreeTip {
   direction: THREE.Vector3;
 }
 
+export interface CanopyInstanceBase {
+  position: THREE.Vector3;
+  rotationX: number;
+  rotationY: number;
+  baseScale: number;
+  /** Stable random 0..1 used to decide, at a given season density, whether this
+   *  instance is one of the "kept" ones — see `applyCanopyState` below. */
+  densityKey: number;
+}
+
 export interface TreeHandle {
   group: THREE.Group;
   trunkMesh: THREE.Mesh;
   trunkMaterial: THREE.MeshStandardMaterial;
   canopyMesh: THREE.InstancedMesh;
   canopyMaterial: THREE.MeshStandardMaterial;
+  canopyInstances: CanopyInstanceBase[];
   tips: TreeTip[];
 }
 
@@ -152,8 +163,8 @@ export function createTree(seed = 20260809): TreeHandle {
   );
   canopyMesh.castShadow = true;
 
-  const dummy = new THREE.Object3D();
   const shadeColor = new THREE.Color();
+  const canopyInstances: CanopyInstanceBase[] = [];
   let instanceIndex = 0;
   for (const tip of tips) {
     for (let i = 0; i < LEAVES_PER_TIP; i++) {
@@ -163,12 +174,12 @@ export function createTree(seed = 20260809): TreeHandle {
         rngRange(rng, -1, 1),
         rngRange(rng, -1, 1),
       ).normalize();
-      dummy.position.copy(tip.position).addScaledVector(jitterDir, jitterRadius);
-      const scale = rngRange(rng, 0.6, 1.15);
-      dummy.scale.setScalar(scale);
-      dummy.rotation.set(rngRange(rng, 0, Math.PI), rngRange(rng, 0, Math.PI), 0);
-      dummy.updateMatrix();
-      canopyMesh.setMatrixAt(instanceIndex, dummy.matrix);
+      const position = tip.position.clone().addScaledVector(jitterDir, jitterRadius);
+      const baseScale = rngRange(rng, 0.6, 1.15);
+      const rotationX = rngRange(rng, 0, Math.PI);
+      const rotationY = rngRange(rng, 0, Math.PI);
+      const densityKey = rng();
+      canopyInstances.push({ position, rotationX, rotationY, baseScale, densityKey });
 
       const shade = rngRange(rng, 0.82, 1.15);
       shadeColor.setScalar(shade);
@@ -176,11 +187,47 @@ export function createTree(seed = 20260809): TreeHandle {
       instanceIndex++;
     }
   }
-  canopyMesh.instanceMatrix.needsUpdate = true;
   if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
 
   const group = new THREE.Group();
   group.add(trunkMesh, canopyMesh);
 
-  return { group, trunkMesh, trunkMaterial, canopyMesh, canopyMaterial, tips };
+  applyCanopyState(canopyMesh, canopyInstances, 1, 1);
+
+  return {
+    group,
+    trunkMesh,
+    trunkMaterial,
+    canopyMesh,
+    canopyMaterial,
+    canopyInstances,
+    tips,
+  };
+}
+
+const canopyDummy = new THREE.Object3D();
+
+/**
+ * Owned here (alongside the instance data it rebuilds) but driven by the season
+ * system (依頼A'): `density` is the fraction of instances kept visible and `scale`
+ * is a uniform size multiplier on top of each instance's own baked variance. Using
+ * each instance's stable `densityKey` instead of re-rolling randomness means the
+ * canopy fills in/thins out smoothly as density changes instead of flickering.
+ */
+export function applyCanopyState(
+  canopyMesh: THREE.InstancedMesh,
+  instances: CanopyInstanceBase[],
+  density: number,
+  scale: number,
+): void {
+  for (let i = 0; i < instances.length; i++) {
+    const inst = instances[i];
+    const visible = inst.densityKey < density;
+    canopyDummy.position.copy(inst.position);
+    canopyDummy.rotation.set(inst.rotationX, inst.rotationY, 0);
+    canopyDummy.scale.setScalar(visible ? inst.baseScale * scale : 0);
+    canopyDummy.updateMatrix();
+    canopyMesh.setMatrixAt(i, canopyDummy.matrix);
+  }
+  canopyMesh.instanceMatrix.needsUpdate = true;
 }

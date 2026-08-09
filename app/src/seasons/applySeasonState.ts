@@ -1,0 +1,56 @@
+import * as THREE from 'three';
+import type { Composition } from '../scene/composition';
+import { applyCanopyState } from '../scene/tree';
+import type { SeasonVisualParams } from './seasonState';
+
+const SUN_DISTANCE = 22;
+const SUN_TARGET = new THREE.Vector3(0, 3, -2);
+const sunOffset = new THREE.Vector3();
+
+/**
+ * Pushes a sampled SeasonVisualParams (season-transition-animation.md §10) into every
+ * material/light in the composition built by scene/composition.ts. This is the single
+ * place that "owns" turning season state into visuals — 依頼B/C/D only ever change
+ * *which* dial position/blend to sample, never touch these materials directly.
+ */
+export function applySeasonState(composition: Composition, params: SeasonVisualParams): void {
+  const { tree, lake, ground, mountains, sky, lights, scene } = composition;
+
+  tree.canopyMaterial.color.copy(params.canopyColor);
+  applyCanopyState(tree.canopyMesh, tree.canopyInstances, params.canopyDensity, params.canopyScale);
+
+  ground.nearShoreMaterial.color.copy(params.groundColor);
+  ground.farShoreMaterial.color.copy(params.farShoreColor);
+
+  (lake.mesh.material as THREE.ShaderMaterial).uniforms.color.value.copy(params.lakeTint);
+
+  sky.material.uniforms.uTopColor.value.copy(params.skyTop);
+  sky.material.uniforms.uHorizonColor.value.copy(params.skyHorizon);
+  sky.material.uniforms.uBottomColor.value.copy(params.skyBottom);
+
+  mountains.layers[0].material.color.copy(params.mountainNear);
+  mountains.layers[1].material.color.copy(params.mountainFar);
+
+  if (scene.fog instanceof THREE.Fog) {
+    scene.fog.color.copy(params.fogColor);
+    scene.fog.near = params.fogNear;
+    scene.fog.far = params.fogFar;
+  }
+
+  const elevation = THREE.MathUtils.degToRad(params.sunElevationDeg);
+  const azimuth = THREE.MathUtils.degToRad(params.sunAzimuthDeg);
+  sunOffset.set(
+    Math.cos(elevation) * Math.sin(azimuth),
+    Math.sin(elevation),
+    Math.cos(elevation) * Math.cos(azimuth),
+  );
+  lights.sun.position.copy(SUN_TARGET).addScaledVector(sunOffset, SUN_DISTANCE);
+  lights.sun.target.position.copy(SUN_TARGET);
+  lights.sun.target.updateMatrixWorld();
+  lights.sun.color.copy(params.sunColor);
+  lights.sun.intensity = params.sunIntensity;
+
+  lights.hemi.color.copy(params.hemiSky);
+  lights.hemi.groundColor.copy(params.hemiGround);
+  lights.hemi.intensity = params.hemiIntensity;
+}
