@@ -1,12 +1,6 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mulberry32, rngRange, type Rng } from '../core/prng';
-import { CAMERA_POSITION } from '../core/camera';
-
-export interface TreeTip {
-  position: THREE.Vector3;
-  direction: THREE.Vector3;
-}
+import { CAMERA_POSITION, CAMERA_LOOK_AT } from '../core/camera';
 
 export interface TreeSeasonState {
   density: number;
@@ -20,11 +14,10 @@ export interface CanopyTextureVariant {
 
 export interface TreeHandle {
   group: THREE.Group;
+  /** The trunk/branch painting — a single camera-facing plane, baked once. Real
+   *  cherry trunks barely move in wind (only the crown does), so unlike the
+   *  canopy this has no pivot of its own; sway lives entirely in canopyPivot. */
   trunkMesh: THREE.Mesh;
-  trunkMaterial: THREE.MeshStandardMaterial;
-  trunkSwayUniforms: { uTime: { value: number }; uFieldStrength: { value: number } };
-  /** A single camera-facing plane carrying a baked canopy texture — see createTree's
-   *  doc comment for why this replaced a cloud of live 3D instances. */
   canopyMesh: THREE.Mesh;
   canopyMaterial: THREE.MeshBasicMaterial;
   /** Pivots the canopy for whole-mass sway (依頼B) — positioned at the branch
@@ -35,179 +28,352 @@ export interface TreeHandle {
    *  `setCanopySeasonState`, never blended live (season transitions are hard-cut
    *  under cover of 依頼D's wave, so no runtime interpolation is needed here). */
   canopyTextures: CanopyTextureVariant[];
-  tips: TreeTip[];
   seasonState: TreeSeasonState;
 }
 
-interface BranchSegment {
-  start: THREE.Vector3;
-  direction: THREE.Vector3;
-  length: number;
+// ---------------------------------------------------------------------------
+// Trunk/branch skeleton — drawn, not simulated.
+//
+// An earlier version built the trunk as real 3D geometry: recursive cylinder
+// segments glued together at hard angle joints, then literally rotated 180°
+// about the fork point to fake a symmetric second limb. Both choices read as
+// mechanical rather than hand-drawn — visible elbow kinks at every joint, and a
+// perfect mirror no real tree (or illustrator) would actually draw.
+//
+// Since the camera never moves (core/camera.ts), the trunk doesn't need to be
+// real 3D geometry any more than the canopy does (see the canopy section's own
+// doc comment below) — it can be *drawn*: a skeleton of tapered bezier curves in
+// one flat (u,v) plane, filled once into a texture. Bezier curves keep each
+// branch's start tangent matched to its parent's end tangent, so joints sweep
+// smoothly instead of kinking. And because it's a drawing, the left/right limb
+// balance can be handled the way an illustrator would balance a composition —
+// generate the left limb freely, measure how far it reached, then generate the
+// right limb independently (genuinely different random branching) but scaled to
+// reach a comparable distance — rather than mirroring one limb onto the other.
+// ---------------------------------------------------------------------------
+
+interface Branch2D {
+  p0: THREE.Vector2;
+  p1: THREE.Vector2;
+  p2: THREE.Vector2;
+  p3: THREE.Vector2;
   radiusStart: number;
   radiusEnd: number;
   depth: number;
 }
 
-// One recursive branch factor per depth level. depth0→1 is the low double-trunk
-// "V" split the reference photo's winter (bare) panel shows clearly; depth1→2 fans
-// each main limb out to build canopy width before finer twigging takes over.
-const BRANCH_COUNTS = [1, 2, 3, 2, 2, 2, 2];
+interface Tip2D {
+  u: number;
+  v: number;
+}
+
+// One child-branch count per depth level. depth0→1 is the low double-trunk "V"
+// split the reference photo's winter (bare) panel shows clearly; depth1→2 fans
+// each main limb out to build canopy width; the two finest levels add the fine
+// twig lace visible at the reference's silhouette edge.
+const BRANCH_COUNTS = [1, 2, 3, 2, 2, 2, 2, 2];
 const MAX_DEPTH = BRANCH_COUNTS.length - 1;
-// Overall size multiplier — the V-split proportions below are tuned relative to
-// each other first, then scaled up as a whole so the tree fills the frame the way
-// the original single-trunk generator did (that one grew ~5.9 units tall through
-// pure multiplicative decay; this explicit-length version is shorter before scaling
-// since two half-length main limbs replace one long trunk run).
 const TREE_SCALE = 1.45;
+const DEPTH_LENGTH = [0.85, 1.55, 1.05, 0.8, 0.62, 0.48, 0.38, 0.3].map((l) => l * TREE_SCALE);
 
-// Explicit per-depth segment length, rather than pure multiplicative decay from the
-// trunk — lets the silhouette proportions (short thick trunk, long wide-spreading
-// main limbs, tapering twigs) be authored directly instead of emerging indirectly
-// from a single decay-rate constant.
-const DEPTH_LENGTH = [0.85, 1.55, 1.05, 0.8, 0.62, 0.48, 0.38].map((l) => l * TREE_SCALE);
-
-const UP = new THREE.Vector3(0, 1, 0);
-const Z_AXIS = new THREE.Vector3(0, 0, 1);
-const X_AXIS = new THREE.Vector3(1, 0, 0);
-const Y_AXIS = new THREE.Vector3(0, 1, 0);
-
-function perpendicular(dir: THREE.Vector3): THREE.Vector3 {
-  const reference = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : UP;
-  return new THREE.Vector3().crossVectors(dir, reference).normalize();
+function angleDir(angleRad: number): THREE.Vector2 {
+  return new THREE.Vector2(Math.sin(angleRad), Math.cos(angleRad));
 }
 
-/** Rotates `dir` by a random angle (0..maxAngle) within a cone around itself. */
-function randomConeDirection(rng: Rng, dir: THREE.Vector3, maxAngleDeg: number): THREE.Vector3 {
-  const angle = THREE.MathUtils.degToRad(rngRange(rng, maxAngleDeg * 0.35, maxAngleDeg));
-  const azimuth = rngRange(rng, 0, Math.PI * 2);
-  const u = perpendicular(dir);
-  const v = new THREE.Vector3().crossVectors(dir, u).normalize();
-  const spread = u.multiplyScalar(Math.cos(azimuth)).addScaledVector(v, Math.sin(azimuth));
-  return dir
-    .clone()
-    .multiplyScalar(Math.cos(angle))
-    .addScaledVector(spread, Math.sin(angle))
-    .normalize();
+/** A cubic bezier whose start/end tangents match `startAngle`/`endAngle` exactly
+ *  (angle measured from vertical, 0 = straight up) — this is what keeps a child
+ *  branch's curve flowing smoothly out of its parent's instead of kinking. */
+function branchCurve(
+  p0: THREE.Vector2,
+  startAngle: number,
+  endAngle: number,
+  length: number,
+): { p0: THREE.Vector2; p1: THREE.Vector2; p2: THREE.Vector2; p3: THREE.Vector2 } {
+  const d0 = angleDir(startAngle);
+  const d1 = angleDir(endAngle);
+  const dAvg = new THREE.Vector2().addVectors(d0, d1);
+  if (dAvg.lengthSq() < 1e-6) dAvg.copy(d0);
+  dAvg.normalize();
+  const p3 = p0.clone().addScaledVector(dAvg, length);
+  const p1 = p0.clone().addScaledVector(d0, length * 0.36);
+  const p2 = p3.clone().addScaledVector(d1, -length * 0.36);
+  return { p0, p1, p2, p3 };
 }
 
-function buildBranchSegments(rng: Rng): { segments: BranchSegment[]; tips: TreeTip[] } {
-  const segments: BranchSegment[] = [];
-  const tips: TreeTip[] = [];
-
-  const recurse = (
-    start: THREE.Vector3,
-    direction: THREE.Vector3,
-    length: number,
-    radiusStart: number,
-    depth: number,
-  ) => {
-    const radiusEnd = radiusStart * rngRange(rng, 0.68, 0.78);
-    const end = start.clone().addScaledVector(direction, length);
-    segments.push({ start, direction, length, radiusStart, radiusEnd, depth });
-
-    const isTip = depth >= MAX_DEPTH || radiusEnd < 0.02;
-    if (isTip) {
-      tips.push({ position: end, direction });
-      return;
-    }
-
-    const childCount = BRANCH_COUNTS[depth + 1] ?? 2;
-    const childBaseLength = DEPTH_LENGTH[depth + 1] ?? DEPTH_LENGTH[DEPTH_LENGTH.length - 1];
-
-    if (depth === 0) {
-      // The low "V": two main limbs at exactly opposite azimuths and the same lean
-      // angle. Letting each limb's *deeper* branching recurse independently (as an
-      // earlier version did) left the two halves of the canopy badly unbalanced —
-      // one side's random spread happening to run wide, the other staying thin —
-      // which read as lopsided even though the founding split angle was symmetric.
-      // So only ONE limb is actually randomly generated; the other is produced by
-      // rotating that whole subtree 180° about the vertical line through the fork
-      // point. From this project's fixed, near-frontal camera (core/camera.ts), a
-      // 180°-about-Y rotation of a point projects to an exact horizontal mirror in
-      // camera space (u,v)→(-u,v), so the two limbs read as true left-right mirror
-      // images despite being a rotation in actual 3D — sufficient here since the
-      // camera never moves to reveal the difference.
-      const azimuth0 = rngRange(rng, 0, Math.PI * 2);
-      const leanRad = THREE.MathUtils.degToRad(rngRange(rng, 26, 34));
-      const dir0 = new THREE.Vector3(
-        Math.sin(leanRad) * Math.cos(azimuth0),
-        Math.cos(leanRad),
-        Math.sin(leanRad) * Math.sin(azimuth0),
-      ).normalize();
-      const length0 = childBaseLength * rngRange(rng, 0.95, 1.05);
-
-      const segmentsBefore = segments.length;
-      const tipsBefore = tips.length;
-      recurse(end.clone(), dir0, length0, radiusEnd, depth + 1);
-
-      const forkPoint = end;
-      const mirrorPos = (v: THREE.Vector3) =>
-        new THREE.Vector3(2 * forkPoint.x - v.x, v.y, 2 * forkPoint.z - v.z);
-      const mirrorDir = (d: THREE.Vector3) => new THREE.Vector3(-d.x, d.y, -d.z);
-
-      for (const seg of segments.slice(segmentsBefore)) {
-        segments.push({
-          ...seg,
-          start: mirrorPos(seg.start),
-          direction: mirrorDir(seg.direction),
-        });
-      }
-      for (const tip of tips.slice(tipsBefore)) {
-        tips.push({ position: mirrorPos(tip.position), direction: mirrorDir(tip.direction) });
-      }
-      return;
-    }
-
-    for (let i = 0; i < childCount; i++) {
-      // Wider cone + more upward/outward bias deeper in the tree, so the silhouette
-      // rounds out into a broad canopy dome instead of staying a narrow scaffold.
-      const coneAngle = 20 + depth * 7;
-      const childDir = randomConeDirection(rng, direction, coneAngle);
-
-      const outward = new THREE.Vector3(end.x, 0, end.z);
-      if (outward.lengthSq() > 1e-6) {
-        outward.normalize();
-        childDir.lerp(outward, 0.06 + depth * 0.02).normalize();
-      }
-      childDir.lerp(UP, 0.06 + depth * 0.02).normalize();
-      if (childDir.y < -0.05) childDir.y = -0.05;
-      childDir.normalize();
-
-      const childLength = childBaseLength * rngRange(rng, 0.85, 1.15);
-      recurse(end.clone(), childDir, childLength, radiusEnd, depth + 1);
-    }
-  };
-
-  const trunkDir = new THREE.Vector3(0, 1, 0);
-  recurse(new THREE.Vector3(0, 0, 0), trunkDir, DEPTH_LENGTH[0], 0.34 * TREE_SCALE, 0);
-  return { segments, tips };
+function bezierPoint(
+  p0: THREE.Vector2,
+  p1: THREE.Vector2,
+  p2: THREE.Vector2,
+  p3: THREE.Vector2,
+  t: number,
+): THREE.Vector2 {
+  const it = 1 - t;
+  const a = it * it * it;
+  const b = 3 * it * it * t;
+  const c = 3 * it * t * t;
+  const d = t * t * t;
+  return new THREE.Vector2(
+    p0.x * a + p1.x * b + p2.x * c + p3.x * d,
+    p0.y * a + p1.y * b + p2.y * c + p3.y * d,
+  );
 }
 
-function segmentToGeometry(segment: BranchSegment): THREE.BufferGeometry {
-  const geometry = new THREE.CylinderGeometry(
-    segment.radiusEnd,
-    segment.radiusStart,
-    segment.length,
-    5,
+interface Skeleton2D {
+  branches: Branch2D[];
+  tips: Tip2D[];
+  forkPoint: THREE.Vector2;
+}
+
+/** Picks a child's own end-angle: fans children evenly across an arc around the
+ *  parent's end direction, jitters it, then pulls it gently back toward vertical
+ *  so branches curve up and outward rather than drifting sideways forever —
+ *  deeper levels pull harder, rounding the silhouette into a canopy dome. */
+function pickChildAngle(
+  rng: Rng,
+  parentAngle: number,
+  depth: number,
+  childIndex: number,
+  childCount: number,
+): number {
+  const spreadDeg = 15 + depth * 6;
+  const arc = THREE.MathUtils.degToRad(spreadDeg);
+  const t = childCount > 1 ? childIndex / (childCount - 1) - 0.5 : 0;
+  let angle = parentAngle + t * arc * 2 + THREE.MathUtils.degToRad(rngRange(rng, -7, 7));
+  const uprightPull = 0.05 + depth * 0.03;
+  angle *= 1 - uprightPull;
+  return angle;
+}
+
+function recurseBranch(
+  rng: Rng,
+  start: THREE.Vector2,
+  tangentInAngle: number,
+  targetAngle: number,
+  length: number,
+  radiusStart: number,
+  depth: number,
+  lengthScale: number,
+  branches: Branch2D[],
+  tips: Tip2D[],
+): void {
+  const radiusEnd = radiusStart * rngRange(rng, 0.68, 0.8);
+  const curve = branchCurve(start, tangentInAngle, targetAngle, length);
+  branches.push({ ...curve, radiusStart, radiusEnd, depth });
+
+  const isTip = depth >= MAX_DEPTH || radiusEnd < 0.016;
+  if (isTip) {
+    tips.push({ u: curve.p3.x, v: curve.p3.y });
+    return;
+  }
+
+  const childCount = BRANCH_COUNTS[depth + 1] ?? 2;
+  const childBaseLength = DEPTH_LENGTH[depth + 1] ?? DEPTH_LENGTH[DEPTH_LENGTH.length - 1];
+  for (let i = 0; i < childCount; i++) {
+    const childAngle = pickChildAngle(rng, targetAngle, depth, i, childCount);
+    const childLength = childBaseLength * rngRange(rng, 0.85, 1.15) * lengthScale;
+    recurseBranch(
+      rng,
+      curve.p3.clone(),
+      targetAngle,
+      childAngle,
+      childLength,
+      radiusEnd,
+      depth + 1,
+      lengthScale,
+      branches,
+      tips,
+    );
+  }
+}
+
+/**
+ * Builds the whole tree skeleton in flat (u,v) "canvas" space, u=0 at the trunk's
+ * ground point, v up. The V-split's two main limbs are each other's independent
+ * random subtree, not mirror copies — see this module's doc comment — balanced by
+ * measuring the left limb's horizontal reach and scaling the right limb's branch
+ * lengths to approximately match it (with its own independent jitter so the match
+ * isn't suspiciously exact either).
+ */
+function buildSkeleton2D(rng: Rng): Skeleton2D {
+  const branches: Branch2D[] = [];
+  const tips: Tip2D[] = [];
+
+  const trunkBase = new THREE.Vector2(0, 0);
+  const trunkRadius = 0.34 * TREE_SCALE;
+  const trunkBendDeg = rngRange(rng, -4, 4);
+  const trunkCurve = branchCurve(
+    trunkBase,
+    0,
+    THREE.MathUtils.degToRad(trunkBendDeg),
+    DEPTH_LENGTH[0],
+  );
+  const forkRadius = trunkRadius * rngRange(rng, 0.72, 0.8);
+  branches.push({ ...trunkCurve, radiusStart: trunkRadius, radiusEnd: forkRadius, depth: 0 });
+  const forkPoint = trunkCurve.p3;
+  const trunkEndAngle = THREE.MathUtils.degToRad(trunkBendDeg);
+
+  const limbLength = DEPTH_LENGTH[1];
+
+  const leftLeanDeg = rngRange(rng, 27, 35);
+  const leftAngle = THREE.MathUtils.degToRad(-leftLeanDeg + rngRange(rng, -4, 4));
+  const leftTipsBefore = tips.length;
+  recurseBranch(
+    rng,
+    forkPoint.clone(),
+    trunkEndAngle,
+    leftAngle,
+    limbLength * rngRange(rng, 0.95, 1.05),
+    forkRadius,
     1,
+    1,
+    branches,
+    tips,
   );
-  geometry.translate(0, segment.length / 2, 0);
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(UP, segment.direction);
-  geometry.applyQuaternion(quaternion);
-  geometry.translate(segment.start.x, segment.start.y, segment.start.z);
+  let leftExtent = 0;
+  for (const tip of tips.slice(leftTipsBefore)) {
+    leftExtent = Math.max(leftExtent, Math.abs(tip.u - forkPoint.x));
+  }
 
-  // Baked per-vertex sway susceptibility for the time-field shader (依頼B, §4):
-  // 0 at the trunk root, ramping toward 1 at the outermost twigs, so thick scaffold
-  // branches barely move while thin tips flutter — see the vertex shader patch in
-  // createTree() for how this is consumed.
-  const swayWeight = segment.depth / MAX_DEPTH;
-  const vertexCount = geometry.attributes.position.count;
-  geometry.setAttribute(
-    'swayWeight',
-    new THREE.Float32BufferAttribute(new Float32Array(vertexCount).fill(swayWeight), 1),
+  // A natural, un-scaled limb tends to reach roughly this far horizontally —
+  // used only as a fallback if the left limb came out unusually narrow, so the
+  // balance scale never explodes.
+  const naturalExtent = limbLength * 1.7;
+  const rightLeanDeg = rngRange(rng, 27, 35);
+  const rightAngle = THREE.MathUtils.degToRad(rightLeanDeg + rngRange(rng, -4, 4));
+  const balanceScale = THREE.MathUtils.clamp(
+    naturalExtent / Math.max(leftExtent, naturalExtent * 0.5),
+    0.78,
+    1.32,
+  );
+  recurseBranch(
+    rng,
+    forkPoint.clone(),
+    trunkEndAngle,
+    rightAngle,
+    limbLength * rngRange(rng, 0.95, 1.05) * balanceScale,
+    forkRadius,
+    1,
+    balanceScale,
+    branches,
+    tips,
   );
 
-  return geometry;
+  return { branches, tips, forkPoint };
+}
+
+interface SkeletonBounds {
+  uMin: number;
+  uMax: number;
+  vMin: number;
+  vMax: number;
+}
+
+function computeSkeletonBounds(branches: Branch2D[]): SkeletonBounds {
+  let uMin = Infinity;
+  let uMax = -Infinity;
+  let vMin = Infinity;
+  let vMax = -Infinity;
+  const samples = 10;
+  for (const b of branches) {
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const p = bezierPoint(b.p0, b.p1, b.p2, b.p3, t);
+      const r = THREE.MathUtils.lerp(b.radiusStart, b.radiusEnd, t);
+      uMin = Math.min(uMin, p.x - r);
+      uMax = Math.max(uMax, p.x + r);
+      vMin = Math.min(vMin, p.y - r);
+      vMax = Math.max(vMax, p.y + r);
+    }
+  }
+  return { uMin, uMax, vMin, vMax };
+}
+
+/** Bakes the trunk/branch skeleton into a texture: each branch becomes a tapered
+ *  ribbon (ribbon width = 2×radius, radius eased along the curve so branches thin
+ *  quickly near their tips like real wood does), filled solid. A single low-alpha
+ *  diagonal gradient is then stamped back onto only the already-opaque bark pixels
+ *  (`source-atop`) to fake one consistent light direction across the whole tree —
+ *  cheap, but it reads as dimensional instead of flat silhouette-filled. */
+function bakeTrunkTexture(
+  branches: Branch2D[],
+  bounds: SkeletonBounds,
+  rng: Rng,
+  pixelsPerUnit: number,
+): { texture: THREE.CanvasTexture; width: number; height: number } {
+  const width = Math.max(32, Math.round((bounds.uMax - bounds.uMin) * pixelsPerUnit));
+  const height = Math.max(32, Math.round((bounds.vMax - bounds.vMin) * pixelsPerUnit));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+
+  const toPx = (u: number, v: number): [number, number] => [
+    (u - bounds.uMin) * pixelsPerUnit,
+    height - (v - bounds.vMin) * pixelsPerUnit,
+  ];
+
+  const baseColor = new THREE.Color('#4a3a2e');
+  const samples = 20;
+  for (const b of branches) {
+    const shadeJitter = rngRange(rng, -0.06, 0.06);
+    const col = baseColor.clone().offsetHSL(0, 0, shadeJitter);
+    ctx.fillStyle = `rgb(${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)})`;
+
+    const left: THREE.Vector2[] = [];
+    const right: THREE.Vector2[] = [];
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const p = bezierPoint(b.p0, b.p1, b.p2, b.p3, t);
+      const tNext = bezierPoint(b.p0, b.p1, b.p2, b.p3, Math.min(1, t + 0.02));
+      const tangent = new THREE.Vector2().subVectors(tNext, p);
+      if (tangent.lengthSq() < 1e-8) tangent.set(0, 1);
+      tangent.normalize();
+      const normal = new THREE.Vector2(-tangent.y, tangent.x);
+      // Eased taper (t^0.6) so radius drops off faster near the tip than a
+      // linear lerp would, matching how real branches thin.
+      const eased = Math.pow(t, 0.6);
+      const r = THREE.MathUtils.lerp(b.radiusStart, b.radiusEnd, eased);
+      left.push(p.clone().addScaledVector(normal, r));
+      right.push(p.clone().addScaledVector(normal, -r));
+    }
+
+    ctx.beginPath();
+    let [sx, sy] = toPx(left[0].x, left[0].y);
+    ctx.moveTo(sx, sy);
+    for (let i = 1; i < left.length; i++) {
+      const [x, y] = toPx(left[i].x, left[i].y);
+      ctx.lineTo(x, y);
+    }
+    for (let i = right.length - 1; i >= 0; i--) {
+      const [x, y] = toPx(right[i].x, right[i].y);
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // A child branch's flat start-cap doesn't reach all the way to its parent's
+    // flat end-cap on the outer side of a bend, leaving a thin sliver of empty
+    // canvas at almost every joint. A filled circle at the join plugs it — the
+    // same trick round line-joins use.
+    const [jx, jy] = toPx(b.p0.x, b.p0.y);
+    ctx.beginPath();
+    ctx.arc(jx, jy, b.radiusStart * pixelsPerUnit, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = 'source-atop';
+  const grad = ctx.createLinearGradient(width * 0.15, 0, width * 0.75, height);
+  grad.addColorStop(0, 'rgba(255,241,222,0.22)');
+  grad.addColorStop(0.55, 'rgba(255,241,222,0)');
+  grad.addColorStop(1, 'rgba(20,12,8,0.28)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+  ctx.globalCompositeOperation = 'source-over';
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return { texture, width, height };
 }
 
 // ---------------------------------------------------------------------------
@@ -226,10 +392,7 @@ function segmentToGeometry(segment: BranchSegment): THREE.BufferGeometry {
 // A canopy that only ever needs to be seen from one fixed angle doesn't need to
 // exist in 3D at all — it can be *painted*, once, onto a single flat texture using
 // Canvas2D (which composites hundreds of soft dabs with proper anti-aliased alpha
-// blending, no sorting concerns), and mapped onto one camera-facing plane. This is
-// the same reasoning already used for scene/ground.ts's radial fade alpha map,
-// taken further: the whole canopy becomes one "painting" instead of a cloud of 3D
-// geometry.
+// blending, no sorting concerns), and mapped onto one camera-facing plane.
 // ---------------------------------------------------------------------------
 
 interface CanopyDab {
@@ -259,45 +422,34 @@ function createTierSprite(brightness: number, size = 48): HTMLCanvasElement {
 }
 
 /**
- * Builds the dab list in the canopy's local 2D (u,v) plane — u/v are world-unit
- * offsets along the `right`/`up` billboard axes from `canopyCenter`.
+ * Builds the dab list in the same flat (u,v) plane the trunk skeleton lives in.
  *
- * The literal branch-tip cloud is *not* painted directly: an earlier version put
- * dabs only near each tip, and because the procedural branching leaves tips
- * clustered in a few clumps with real gaps between them, that read as several
- * separate detached blobs — not the one continuous rounded mass the reference
- * photo shows. Real cherry canopies (and the reference art) read as a cumulus-
- * cloud silhouette: many overlapping rounded lobes fused into one shape with a
- * bumpy but unbroken edge. So instead this scatters ~24 organic "lobe" centers
- * across an oval footprint (sized from the tip cloud, tapered at the bottom
- * toward the trunk fork so it doesn't look like it floats free of the tree), then
- * fills each lobe with one soft macro dab plus many small fine dabs. The tip
- * cloud only decides the footprint's size and position, not the paint pattern.
+ * The literal branch-tip cloud is *not* painted directly: dabs placed only near
+ * each tip read as several separate detached blobs, because the procedural
+ * branching leaves tips clustered with real gaps between them — not the one
+ * continuous rounded mass the reference photo shows. Real cherry canopies (and
+ * the reference art) read as a cumulus-cloud silhouette: many overlapping
+ * rounded lobes fused into one shape with a bumpy but unbroken edge. So instead
+ * this scatters lobe centers on an evenly-spaced jittered grid across an oval
+ * footprint (sized from the tip cloud, tapered at the bottom toward the trunk
+ * fork), then fills each lobe with one soft macro dab plus many small fine dabs.
+ * The tip cloud only decides the footprint's size and position.
  */
-function buildCanopyDabs(
-  rng: Rng,
-  tips: TreeTip[],
-  canopyCenter: THREE.Vector3,
-  right: THREE.Vector3,
-  up: THREE.Vector3,
-): CanopyDab[] {
-  const relative = new THREE.Vector3();
+function buildCanopyDabs(rng: Rng, tips: Tip2D[]): CanopyDab[] {
   let uMin = Infinity;
   let uMax = -Infinity;
   let vMin = Infinity;
   let vMax = -Infinity;
   for (const tip of tips) {
-    relative.subVectors(tip.position, canopyCenter);
-    const u = relative.dot(right);
-    const v = relative.dot(up);
-    uMin = Math.min(uMin, u);
-    uMax = Math.max(uMax, u);
-    vMin = Math.min(vMin, v);
-    vMax = Math.max(vMax, v);
+    uMin = Math.min(uMin, tip.u);
+    uMax = Math.max(uMax, tip.u);
+    vMin = Math.min(vMin, tip.v);
+    vMax = Math.max(vMax, tip.v);
   }
 
   const halfW = ((uMax - uMin) / 2) * 1.06;
   const halfHUp = ((vMax - vMin) / 2) * 1.12;
+  const uCenter = (uMin + uMax) / 2;
   const maskCenterV = (vMin + vMax) / 2 + halfHUp * 0.06;
   const bottomTaperV = vMin - halfHUp * 0.22;
 
@@ -307,7 +459,7 @@ function buildCanopyDabs(
   const insideMask = (u: number, v: number): number => {
     const t = THREE.MathUtils.clamp((v - bottomTaperV) / (halfHUp * 0.9), 0, 1);
     const waist = THREE.MathUtils.lerp(0.4, 1, t);
-    const nu = u / (halfW * waist || 1);
+    const nu = (u - uCenter) / (halfW * waist || 1);
     const nv = (v - maskCenterV) / (halfHUp || 1);
     return 1 - (nu * nu + nv * nv);
   };
@@ -330,19 +482,10 @@ function buildCanopyDabs(
     return best;
   };
 
-  // Jittered-grid scatter rather than pure rejection sampling: a min-spacing
-  // rejection loop can burn its whole attempt budget seeding one region first (this
-  // exact seed did — it filled the left half before the cap hit, leaving the right
-  // half of the canopy bare), which reads as lopsided for reasons that have nothing
-  // to do with the tree's actual (now-mirrored, genuinely symmetric) shape. A grid
-  // guarantees one lobe attempt per cell across the whole mask, so coverage cannot
-  // silently run out partway across the canopy.
-  // Separate column/row spacing rather than one square cell size: the footprint is
-  // typically wide and comparatively short (branches spread laterally more than
-  // vertically), so a cell size derived only from width left far too few *rows* to
-  // sample the mask's narrower vertical extent — whole columns near the tapering
-  // top/bottom edges failed the mask test entirely, producing real gaps in the
-  // canopy rather than just thinner texture there.
+  // Separate column/row spacing rather than one square cell size: the footprint
+  // is wide and comparatively short (branches spread laterally more than
+  // vertically), so a cell size derived only from width leaves far too few rows
+  // to sample the mask's narrower vertical extent, producing real gaps.
   const cols = 10;
   const rows = 6;
   const cellW = (halfW * 2 * 1.08) / cols;
@@ -352,7 +495,7 @@ function buildCanopyDabs(
   for (let row = 0; row <= rows; row++) {
     const gv = -halfHUp * 1.08 + row * cellH;
     for (let col = 0; col <= cols; col++) {
-      const gu = -halfW * 1.08 + col * cellW;
+      const gu = uCenter - halfW * 1.08 + col * cellW;
       const u = gu + rngRange(rng, -cellW * 0.4, cellW * 0.4);
       const v = maskCenterV + gv + rngRange(rng, -cellH * 0.4, cellH * 0.4);
       if (insideMask(u, v) < -0.08) continue;
@@ -446,10 +589,13 @@ function bakeCanopyTexture(
 }
 
 /**
- * Procedural single-tree generator, shaped to match the reference photo's silhouette
- * (season-transition-animation.md's base composition reference,
+ * Procedural single-tree generator, drawn (not simulated) to match the reference
+ * photo's silhouette (season-transition-animation.md's base composition reference,
  * `1786259704552.png`): a short, thick trunk splitting low into two spreading main
- * limbs, opening into a canopy noticeably wider than the trunk is tall.
+ * limbs, opening into a canopy noticeably wider than the trunk is tall. Both the
+ * trunk/branches and the canopy are flat camera-facing planes baked once from
+ * Canvas2D painting — see this module's two doc comments for why a fixed camera
+ * makes that the right technique instead of live 3D geometry.
  *
  * `densityLevels` are the distinct canopy densities the season system will ever ask
  * for (season-transition-animation.md's per-scene canopyDensity values) — one
@@ -458,68 +604,38 @@ function bakeCanopyTexture(
  */
 export function createTree(seed = 20260809, densityLevels: number[] = [1]): TreeHandle {
   const rng = mulberry32(seed);
-  const { segments, tips } = buildBranchSegments(rng);
+  const skeleton = buildSkeleton2D(rng);
+  const skeletonBounds = computeSkeletonBounds(skeleton.branches);
 
-  const trunkGeometry = mergeGeometries(
-    segments.map((segment) => segmentToGeometry(segment)),
-    false,
-  );
-  if (!trunkGeometry) throw new Error('failed to merge tree branch geometry');
-  trunkGeometry.computeVertexNormals();
+  // The plane orientation/anchor is derived once from the fixed camera itself
+  // (core/camera.ts) rather than from any generated geometry — anchoring at the
+  // camera's own look-at height keeps the plane close to perpendicular to the
+  // actual view ray regardless of how tall a given seed's tree comes out.
+  const facingAnchor = new THREE.Vector3(0, CAMERA_LOOK_AT.y, 0);
+  const towardCamera = CAMERA_POSITION.clone().sub(facingAnchor).normalize();
+  const zAxis = new THREE.Vector3(0, 0, 1);
+  const billboardAlign = new THREE.Quaternion().setFromUnitVectors(zAxis, towardCamera);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(billboardAlign);
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(billboardAlign);
+  const worldOf = (u: number, v: number): THREE.Vector3 =>
+    new THREE.Vector3().addScaledVector(right, u).addScaledVector(up, v);
 
-  const trunkSwayUniforms = {
-    uTime: { value: 0 },
-    uFieldStrength: { value: 0 },
-  };
-  const trunkMaterial = new THREE.MeshStandardMaterial({
-    color: '#4b3a2f',
-    roughness: 0.95,
-    metalness: 0,
+  const trunkBake = bakeTrunkTexture(skeleton.branches, skeletonBounds, rng, PIXELS_PER_WORLD_UNIT);
+  const trunkMaterial = new THREE.MeshBasicMaterial({
+    map: trunkBake.texture,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
   });
-  // Hierarchical branch sway (season-transition-animation.md §4 table, row 1): a
-  // slow wide sweep scaled by swayWeight, plus a faster small flutter scaled by
-  // swayWeight² so it only really shows up at the thin tips — an approximation of
-  // "太い枝はゆっくり大きく、細い枝先は小刻みに揺れる" without a full hierarchical
-  // bone/lever simulation (agent-workflow-policy.md §2 flags this class of work as
-  // Opus-tier; this is the first-pass shape, exact damping curves are later polish).
-  trunkMaterial.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, trunkSwayUniforms);
-    shader.vertexShader =
-      `attribute float swayWeight;\nuniform float uTime;\nuniform float uFieldStrength;\n` +
-      shader.vertexShader;
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-      {
-        float sw = swayWeight;
-        float slow = sin(uTime * 1.1 + sw * 2.3) * sw * 0.22;
-        float fast = sin(uTime * 4.3 + sw * 6.1) * sw * sw * 0.06;
-        transformed.x += (slow + fast) * uFieldStrength;
-        transformed.z += cos(uTime * 0.9 + sw * 2.6) * sw * 0.16 * uFieldStrength;
-      }`,
-    );
-  };
-  const trunkMesh = new THREE.Mesh(trunkGeometry, trunkMaterial);
+  const trunkWidth = skeletonBounds.uMax - skeletonBounds.uMin;
+  const trunkHeight = skeletonBounds.vMax - skeletonBounds.vMin;
+  const trunkMesh = new THREE.Mesh(new THREE.PlaneGeometry(trunkWidth, trunkHeight), trunkMaterial);
+  trunkMesh.quaternion.copy(billboardAlign);
+  trunkMesh.position.copy(
+    worldOf((skeletonBounds.uMin + skeletonBounds.uMax) / 2, (skeletonBounds.vMin + skeletonBounds.vMax) / 2),
+  );
 
-  const canopyCenter = new THREE.Vector3();
-  for (const tip of tips) canopyCenter.add(tip.position);
-  canopyCenter.divideScalar(tips.length);
-  let minY = Infinity;
-  let maxY = -Infinity;
-  for (const tip of tips) {
-    minY = Math.min(minY, tip.position.y);
-    maxY = Math.max(maxY, tip.position.y);
-  }
-
-  // The canopy plane always faces the camera; since the camera never moves
-  // (season-transition-animation.md §1 "定点観測のタイムマシン"), that facing
-  // quaternion — and the right/up axes derived from it — can be computed once here.
-  const towardCamera = CAMERA_POSITION.clone().sub(canopyCenter).normalize();
-  const billboardAlign = new THREE.Quaternion().setFromUnitVectors(Z_AXIS, towardCamera);
-  const right = X_AXIS.clone().applyQuaternion(billboardAlign);
-  const up = Y_AXIS.clone().applyQuaternion(billboardAlign);
-
-  const dabs = buildCanopyDabs(rng, tips, canopyCenter, right, up);
+  const dabs = buildCanopyDabs(rng, skeleton.tips);
   const bounds = computeCanopyBounds(dabs);
   const tierSprites = BRIGHTNESS_TIERS.map((b) => createTierSprite(b));
 
@@ -548,39 +664,28 @@ export function createTree(seed = 20260809, densityLevels: number[] = [1]): Tree
   );
   canopyMesh.quaternion.copy(billboardAlign);
 
-  // The pivot sits at the branch attachment point (canopy's horizontal center, but
-  // at the *bottom* of its vertical extent) rather than the canopy's own center, so
-  // rotating it for sway swings the top of the mass further than the bottom — like
-  // something actually hanging off the tree, not spinning in place.
-  const attachPoint = new THREE.Vector3(canopyCenter.x, minY, canopyCenter.z);
+  // The pivot sits at the branch fork point (u,v) rather than the canopy's own
+  // center, so rotating it for sway swings the top of the mass further than the
+  // bottom — like something actually hanging off the tree, not spinning in place.
   const canopyPivot = new THREE.Group();
-  canopyPivot.position.copy(attachPoint);
+  canopyPivot.position.copy(worldOf(skeleton.forkPoint.x, skeleton.forkPoint.y));
   canopyMesh.position
-    .copy(canopyCenter)
-    .addScaledVector(right, bounds.uMid)
-    .addScaledVector(up, bounds.vMid)
-    .sub(attachPoint);
+    .copy(worldOf(bounds.uMid, bounds.vMid))
+    .sub(canopyPivot.position);
   canopyPivot.add(canopyMesh);
 
   const group = new THREE.Group();
   group.add(trunkMesh, canopyPivot);
-  // The V-split (depth0→1) picks a random azimuth, which can leave the canopy
-  // centroid noticeably off to one side of the trunk's ground point — re-center the
-  // whole tree horizontally on its canopy so it doesn't drift toward a frame edge.
-  group.position.x = -canopyCenter.x;
 
   const seasonState: TreeSeasonState = { density: canopyTextures[0].density, scale: 1 };
 
   return {
     group,
     trunkMesh,
-    trunkMaterial,
-    trunkSwayUniforms,
     canopyMesh,
     canopyMaterial,
     canopyPivot,
     canopyTextures,
-    tips,
     seasonState,
   };
 }
@@ -611,12 +716,10 @@ export function setCanopyColor(tree: TreeHandle, color: THREE.Color): void {
   tree.canopyMaterial.color.copy(color);
 }
 
-/** Called every frame by the render loop (依頼B) to animate trunk sway and the
- *  whole-canopy sway (see canopyPivot's doc comment on createTree). */
+/** Called every frame by the render loop (依頼B) to animate the canopy's whole-
+ *  mass sway (see canopyPivot's doc comment on createTree). The trunk plane has
+ *  no sway of its own — real trunks barely move; only the crown does. */
 export function updateTreeAnimation(tree: TreeHandle, time: number, fieldStrength: number): void {
-  tree.trunkSwayUniforms.uTime.value = time;
-  tree.trunkSwayUniforms.uFieldStrength.value = fieldStrength;
-
   tree.canopyPivot.rotation.z = Math.sin(time * 1.1) * 0.045 * fieldStrength;
   tree.canopyPivot.rotation.x = Math.sin(time * 0.85 + 1.7) * 0.03 * fieldStrength;
 }
