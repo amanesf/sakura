@@ -274,7 +274,7 @@ function buildClusterPlacements(
   const pyMin = trunk.contentTopPy - marginPx;
   const pyMax = canopyStartPy;
 
-  const cellPx = 44;
+  const cellPx = 28;
   const cols = Math.max(1, Math.round((pxMax - pxMin) / cellPx));
   const rows = Math.max(1, Math.round((pyMax - pyMin) / cellPx));
   const cellW = (pxMax - pxMin) / cols;
@@ -289,7 +289,7 @@ function buildClusterPlacements(
       const py = gpy + rngRange(rng, -cellH * 0.4, cellH * 0.4);
       if (py > canopyStartPy) continue;
       const c = coverage(px, py, blurRadiusPx);
-      if (c < 0.045) continue;
+      if (c < 0.02) continue;
       const [u, v] = pxToWorld(px, py);
       const radiusWorld = (cellPx / PIXELS_PER_WORLD_UNIT) * rngRange(rng, 0.55, 0.85);
       placements.push({ u, v, radius: radiusWorld, densityKey: rng() });
@@ -303,8 +303,12 @@ function buildClusterPlacements(
 // filling only the middle ~50% of the square frame, generous padding — rather
 // than a chunky pom-pom filling the whole frame, so the plane has to be sized up
 // correspondingly more (≈1/0.5×2 ≈ 4×) from the "content radius" to show that
-// padding without the content itself reading smaller than intended.
-const CLUSTER_PLANE_SCALE = 4.0;
+// padding without the content itself reading smaller than intended. Bumped further
+// (was 4.0) so neighboring clusters overlap enough to hide the bare branches
+// between them — the reference art's canopy reads as near-solid coverage, not
+// discrete separated puffs (season-transition-animation.md 参考画像比較, user
+// direction: "花や葉っぱはもっと多くする必要ある").
+const CLUSTER_PLANE_SCALE = 6.2;
 
 function buildSeasonClusterSet(
   seasonKey: Exclude<CanopySeasonKey, 'winter'>,

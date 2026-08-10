@@ -24,10 +24,13 @@ export interface FlowerHandle {
   seasonState: FlowerSeasonState;
 }
 
-const INSTANCE_COUNT = 420;
+// See vegetation.ts's identical-purpose constants for why these grew (was
+// 420/3.2/0.55) — matching the enlarged ground plane's visible extent and letting
+// flowers grow close to the trunk instead of leaving a bare ring around it.
+const INSTANCE_COUNT = 1300;
 const PATCH_CENTER = new THREE.Vector2(0, -1.4);
-const PATCH_RADIUS = 3.2;
-const TRUNK_EXCLUSION_RADIUS = 0.55;
+const PATCH_RADIUS = 6.0;
+const TRUNK_EXCLUSION_RADIUS = 0.2;
 const FLOWER_HEIGHT = 0.22;
 
 // Two Gemini-generated wildflower sprites (art-source/flowers/, chroma-key

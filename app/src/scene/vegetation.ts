@@ -25,10 +25,16 @@ export interface VegetationHandle {
   seasonState: VegetationSeasonState;
 }
 
-const INSTANCE_COUNT = 260;
+// Radius/count both bumped (was 3.3/260) so the tuft patch actually reaches the
+// now much-larger ground plane's visible extent (see ground.ts) instead of leaving
+// bare photo-texture showing past a small inner circle, and so density holds up
+// over the larger area. TRUNK_EXCLUSION_RADIUS shrunk hard (was 0.55) — grass is
+// meant to grow right up against the trunk and hide its base/ground seam, not
+// leave a bare ring around it (user direction: "木の根元は草とかで隠すこと").
+const INSTANCE_COUNT = 950;
 const PATCH_CENTER = new THREE.Vector2(0, -1.4);
-const PATCH_RADIUS = 3.3;
-const TRUNK_EXCLUSION_RADIUS = 0.55;
+const PATCH_RADIUS = 6.2;
+const TRUNK_EXCLUSION_RADIUS = 0.12;
 
 // One Gemini-generated grass/flower tuft per season (art-source/vegetation/,
 // chroma-key extracted from a blue-background generation — see

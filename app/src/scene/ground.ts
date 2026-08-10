@@ -9,29 +9,29 @@ export interface GroundHandle {
 }
 
 /**
- * A soft radial falloff (opaque center, transparent rim) so the near shore blends
- * into the lake instead of reading as a hard-edged coin. This is a blend mask, not a
- * visual asset in its own right (agent-workflow-policy.md §1.5 bans procedural
- * *imagery* — invented colors/textures standing in for the reference art — not
- * utility gradients like this one), so it's still generated at runtime via Canvas2D.
+ * A soft one-edge falloff (opaque everywhere except the far/lake-facing edge,
+ * which fades to transparent) so the near shore blends into the lake there instead
+ * of reading as a hard-edged rectangle — the other three edges are pushed well past
+ * the visible frustum (see createGround) so they never need a fade at all. This is
+ * a blend mask, not a visual asset in its own right (agent-workflow-policy.md §1.5
+ * bans procedural *imagery* — invented colors/textures standing in for the
+ * reference art — not utility gradients like this one), so it's still generated at
+ * runtime via Canvas2D.
  */
-function createRadialFadeTexture(): THREE.Texture {
+function createEdgeFadeTexture(): THREE.Texture {
   const size = 256;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const gradient = ctx.createRadialGradient(
-    size / 2,
-    size / 2,
-    size * 0.32,
-    size / 2,
-    size / 2,
-    size * 0.5,
-  );
-  gradient.addColorStop(0, 'rgba(255,255,255,1)');
-  gradient.addColorStop(0.75, 'rgba(255,255,255,0.9)');
-  gradient.addColorStop(1, 'rgba(255,255,255,0)');
+  // v=0 (PlaneGeometry's local -Y, the far/lake-facing edge after this mesh's
+  // rotation — see createGround) fades out; v=1 (near, camera-facing edge) and
+  // everywhere else stays fully opaque.
+  const gradient = ctx.createLinearGradient(0, 0, 0, size);
+  gradient.addColorStop(0, 'rgba(255,255,255,0)');
+  gradient.addColorStop(0.35, 'rgba(255,255,255,0.9)');
+  gradient.addColorStop(0.55, 'rgba(255,255,255,1)');
+  gradient.addColorStop(1, 'rgba(255,255,255,1)');
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
   const texture = new THREE.CanvasTexture(canvas);
@@ -51,8 +51,8 @@ const GROUND_TEXTURE_FILES: Record<SeasonId, string> = {
 };
 
 // Near and far shore need independently-tiled copies of the same season's texture
-// (far shore repeats 6x horizontally, near shore doesn't) — two caches so each gets
-// its own THREE.Texture instance rather than fighting over one shared `.repeat`.
+// (different repeat counts) — two caches so each gets its own THREE.Texture
+// instance rather than fighting over one shared `.repeat`.
 const nearTextureCache = new Map<SeasonId, THREE.Texture>();
 const farTextureCache = new Map<SeasonId, THREE.Texture>();
 const groundTextureLoader = new THREE.TextureLoader();
@@ -65,9 +65,26 @@ function loadGroundTexture(season: SeasonId, cache: Map<SeasonId, THREE.Texture>
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
+  // Ground is a large tiled plane seen at a steep grazing angle (see
+  // NEAR_SHORE_WIDTH/DEPTH) — without anisotropic filtering, mipmapping picks a
+  // near-flat average-color mip for most of it well before the tiles are actually
+  // that small on screen, reading as a featureless wash instead of visible texture.
+  texture.anisotropy = 16;
   cache.set(season, texture);
   return texture;
 }
+
+const NEAR_SHORE_WIDTH = 46;
+const NEAR_SHORE_DEPTH = 24;
+// Far edge (toward the lake) sits here; the plane extends *toward* the camera from
+// this line, well past the bottom of frame — see createGround's sizing comment.
+const NEAR_SHORE_FAR_EDGE_Z = -6.2;
+// World-unit size of one texture tile. The generated ground photos aren't seamless
+// (no tiling-aware generation step), so every repeat is a visible seam — this
+// stays large (few, big tiles) rather than matching the old ~4.4-unit circle's
+// scale 1:1, trading a bit of texture crispness for far fewer seams across the
+// much larger plane.
+const NEAR_SHORE_TILE_SIZE = 14;
 
 /**
  * Two ground pieces bracket the lake (see scene/lake.ts for the water plane the tree
@@ -77,10 +94,19 @@ function loadGroundTexture(season: SeasonId, cache: Map<SeasonId, THREE.Texture>
  * setGroundSeasonState swaps the `map` on season change (依頼A').
  */
 export function createGround(): GroundHandle {
-  const fadeTexture = createRadialFadeTexture();
+  const fadeTexture = createEdgeFadeTexture();
   const initialTexture = loadGroundTexture('winter', nearTextureCache);
+  // Repeat so the photo tiles at roughly the same visual scale the old ~4.4-radius
+  // circle showed it at, rather than one image stretched across the whole
+  // now-much-larger plane (see NEAR_SHORE_WIDTH/DEPTH below).
+  initialTexture.repeat.set(NEAR_SHORE_WIDTH / NEAR_SHORE_TILE_SIZE, NEAR_SHORE_DEPTH / NEAR_SHORE_TILE_SIZE);
 
-  const nearShoreGeometry = new THREE.CircleGeometry(4.4, 48);
+  // A wide plane extending from the lakeshore all the way past the camera (was a
+  // small radius-4.4 circle centered right at the tree, which read as a floating
+  // island) — the reference art's near shore fills the whole foreground edge to
+  // edge with no visible boundary. Only the far (lake-facing) edge is ever in
+  // frame; the near/left/right edges are pushed well past the visible frustum.
+  const nearShoreGeometry = new THREE.PlaneGeometry(NEAR_SHORE_WIDTH, NEAR_SHORE_DEPTH);
   const nearShoreMaterial = new THREE.MeshStandardMaterial({
     color: '#ffffff',
     roughness: 1,
@@ -90,10 +116,10 @@ export function createGround(): GroundHandle {
   });
   const nearShore = new THREE.Mesh(nearShoreGeometry, nearShoreMaterial);
   nearShore.rotation.x = -Math.PI / 2;
-  nearShore.position.set(0, 0.03, -2);
+  nearShore.position.set(0, 0.03, NEAR_SHORE_FAR_EDGE_Z + NEAR_SHORE_DEPTH / 2);
 
   const farTexture = loadGroundTexture('winter', farTextureCache);
-  farTexture.repeat.set(6, 1);
+  farTexture.repeat.set(3, 1);
 
   const farShoreGeometry = new THREE.PlaneGeometry(60, 6);
   const farShoreMaterial = new THREE.MeshStandardMaterial({
@@ -109,14 +135,15 @@ export function createGround(): GroundHandle {
 }
 
 /** Called by the season system (依頼A') whenever the dial settles on a new season —
- *  swaps the ground photo rather than tinting a flat procedural texture. The far
- *  shore's own loaded copy keeps its independent repeat.set(6,1) tiling. */
+ *  swaps the ground photo rather than tinting a flat procedural texture. */
 export function setGroundSeasonState(ground: GroundHandle, seasonId: SeasonId): void {
-  ground.nearShoreMaterial.map = loadGroundTexture(seasonId, nearTextureCache);
+  const nearTexture = loadGroundTexture(seasonId, nearTextureCache);
+  nearTexture.repeat.set(NEAR_SHORE_WIDTH / NEAR_SHORE_TILE_SIZE, NEAR_SHORE_DEPTH / NEAR_SHORE_TILE_SIZE);
+  ground.nearShoreMaterial.map = nearTexture;
   ground.nearShoreMaterial.needsUpdate = true;
 
   const farTexture = loadGroundTexture(seasonId, farTextureCache);
-  farTexture.repeat.set(6, 1);
+  farTexture.repeat.set(3, 1);
   ground.farShoreMaterial.map = farTexture;
   ground.farShoreMaterial.needsUpdate = true;
 }
