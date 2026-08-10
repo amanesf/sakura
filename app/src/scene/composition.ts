@@ -47,7 +47,7 @@ export async function createComposition(): Promise<Composition> {
   scene.add(lake.mesh);
 
   const ground = createGround();
-  scene.add(ground.nearShore, ground.farShore);
+  scene.add(ground.nearShore, ground.farShore, ground.lakeCover);
 
   const tree = await createTree();
   scene.add(tree.group);
@@ -56,7 +56,7 @@ export async function createComposition(): Promise<Composition> {
   scene.add(vegetation.mesh);
 
   const flowers = createFlowers();
-  scene.add(flowers.mesh);
+  scene.add(flowers.group);
 
   const shedding = createSheddingParticles();
   scene.add(shedding.mesh);

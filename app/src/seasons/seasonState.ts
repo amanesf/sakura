@@ -23,21 +23,18 @@ export interface SeasonVisualParams {
   /** Uniform size multiplier applied on top of each instance's own baked variance. */
   canopyScale: number;
 
-  /** Ground / shore. */
-  groundColor: THREE.Color;
-  farShoreColor: THREE.Color;
-
-  /** Foreground shore vegetation (scene/vegetation.ts). */
-  vegetationColor: THREE.Color;
+  /** Foreground shore vegetation (scene/vegetation.ts) — density/height only, the
+   *  tuft's own color now comes from its Gemini-generated texture, not a tint. */
   vegetationDensity: number;
   vegetationHeight: number;
   /** Scattered wildflower dots (scene/flowers.ts) — spring's "花畑" (§5), 0 elsewhere. */
   flowerDensity: number;
 
-  /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉.
-   *  0 outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
+  /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉 —
+   *  sensitivity only, the sprite's own color now comes from its Gemini-generated
+   *  texture (季節ごとのスプライト切り替えはSeasonIdで行う, not a color tint). 0
+   *  outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
    *  gearing for why this is a multiplier rather than a plain on/off flag. */
-  sheddingColor: THREE.Color;
   sheddingSensitivity: number;
 
   /** Lake (Reflector tint, multiplies the mirrored scene). */
@@ -47,10 +44,6 @@ export interface SeasonVisualParams {
   skyTop: THREE.Color;
   skyHorizon: THREE.Color;
   skyBottom: THREE.Color;
-
-  /** Mountain ridgelines, near then far layer. */
-  mountainNear: THREE.Color;
-  mountainFar: THREE.Color;
 
   /** Scene fog. */
   fogColor: THREE.Color;
@@ -75,32 +68,20 @@ export interface SeasonVisualParams {
 type SeasonKeyframeInput = Omit<
   SeasonVisualParams,
   | 'canopyColor'
-  | 'groundColor'
-  | 'farShoreColor'
-  | 'vegetationColor'
-  | 'sheddingColor'
   | 'lakeTint'
   | 'skyTop'
   | 'skyHorizon'
   | 'skyBottom'
-  | 'mountainNear'
-  | 'mountainFar'
   | 'fogColor'
   | 'sunColor'
   | 'hemiSky'
   | 'hemiGround'
 > & {
   canopyColor: string;
-  groundColor: string;
-  farShoreColor: string;
-  vegetationColor: string;
-  sheddingColor: string;
   lakeTint: string;
   skyTop: string;
   skyHorizon: string;
   skyBottom: string;
-  mountainNear: string;
-  mountainFar: string;
   fogColor: string;
   sunColor: string;
   hemiSky: string;
@@ -121,20 +102,19 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 0,
     canopyScale: 0.55,
     canopyColor: '#8a8378',
-    groundColor: '#dfe8ee',
-    farShoreColor: '#c7d3da',
-    vegetationColor: '#e5eef2',
     vegetationDensity: 0.6,
     vegetationHeight: 0.5,
     flowerDensity: 0,
-    sheddingColor: '#e8ecf0',
     sheddingSensitivity: 0,
-    lakeTint: '#9fb9c9',
-    skyTop: '#9fc3e8',
-    skyHorizon: '#e8f1f7',
+    // lakeTint/skyTop/skyHorizon below are pixel-sampled from winter_panel_crop.png
+    // (art-source/COMPOSITION-REFERENCE.md §4), replacing earlier decide-by-eye
+    // values per agent-workflow-policy.md §1.5. Ground and mountains are no longer
+    // colors here at all — see scene/ground.ts and scene/mountains.ts's
+    // Gemini-generated per-season photo textures.
+    lakeTint: '#7295b2',
+    skyTop: '#7fa8da',
+    skyHorizon: '#d3daea',
     skyBottom: '#c7d6da',
-    mountainNear: '#8b9aa0',
-    mountainFar: '#c3d0d6',
     fogColor: '#c9d8de',
     fogNear: 20,
     fogFar: 75,
@@ -157,24 +137,24 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // just softened the fine texture). With ~60 discrete generated clusters
     // (tree.ts's cluster system) that same fraction leaves visible gaps showing
     // bare branch through the canopy — most clusters need to stay lit for a full
-    // bloom, with summer's 1.0 still reading fuller/denser by comparison.
-    canopyDensity: 0.93,
-    canopyScale: 0.92,
+    // bloom, with summer's 1.0 still reading fuller/denser by comparison. Bumped
+    // to near-1.0 and canopyScale enlarged (was 0.93/0.92) per a Gemini composition
+    // review: the reference canopy spreads well into the left half of frame and
+    // reads as a much larger, denser mass than ours did.
+    canopyDensity: 0.98,
+    canopyScale: 1.12,
     canopyColor: '#f1aec4',
-    groundColor: '#a6b17a',
-    farShoreColor: '#82aa5f',
-    vegetationColor: '#d9b67c',
     vegetationDensity: 0.92,
     vegetationHeight: 0.35,
     flowerDensity: 0.85,
-    sheddingColor: '#f5b3cd',
     sheddingSensitivity: 4.6,
+    // skyTop: pixel-sampled from spring_panel_crop.png (COMPOSITION-REFERENCE.md
+    // §5.3); ground/mountains are now photo textures, see scene/ground.ts and
+    // scene/mountains.ts. skyHorizon left as-is (doc: "ほぼ一致").
     lakeTint: '#bfd7df',
-    skyTop: '#77b8ee',
+    skyTop: '#91cbfc',
     skyHorizon: '#e0eaef',
     skyBottom: '#d9e8d1',
-    mountainNear: '#7e9a7d',
-    mountainFar: '#a4bcbb',
     fogColor: '#eef1ea',
     fogNear: 27,
     fogFar: 98,
@@ -191,22 +171,20 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     id: 'summer',
     label: '夏',
     canopyDensity: 1.0,
-    canopyScale: 1.05,
+    // Enlarged alongside spring's (was 1.05) — same canopy-spread finding.
+    canopyScale: 1.18,
     canopyColor: '#3f9a4a',
-    groundColor: '#4f9b3d',
-    farShoreColor: '#3f8a38',
-    vegetationColor: '#3f8a35',
+    // skyTop: pixel-sampled from summer_panel_crop.png (COMPOSITION-REFERENCE.md
+    // §5.3); ground/vegetation/mountains are all photo textures now, see
+    // scene/ground.ts, scene/vegetation.ts and scene/mountains.ts.
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
     flowerDensity: 0,
-    sheddingColor: '#ffffff',
     sheddingSensitivity: 0,
     lakeTint: '#2f7fa0',
-    skyTop: '#3f8fe0',
+    skyTop: '#67adf0',
     skyHorizon: '#bfe3f7',
     skyBottom: '#dff2e0',
-    mountainNear: '#4d7a52',
-    mountainFar: '#7fa39a',
     fogColor: '#cfe9e0',
     fogNear: 30,
     fogFar: 95,
@@ -226,24 +204,25 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // "just turned" vs. "already bare" as separate dial notches.
     id: 'autumn',
     label: '秋',
-    // See spring's canopyDensity comment — same reasoning.
-    canopyDensity: 0.9,
-    canopyScale: 0.95,
+    // See spring's canopyDensity comment — same reasoning. Scale enlarged (was
+    // 0.95) alongside spring/summer's.
+    canopyDensity: 0.95,
+    canopyScale: 1.08,
     canopyColor: '#d0651f',
-    groundColor: '#ad7936',
-    farShoreColor: '#98722f',
-    vegetationColor: '#bea87c',
     vegetationDensity: 0.75,
     vegetationHeight: 0.8,
     flowerDensity: 0,
-    sheddingColor: '#cf7a30',
     sheddingSensitivity: 4.6,
+    // skyTop/skyHorizon: pixel-sampled from autumn_panel_crop.png
+    // (COMPOSITION-REFERENCE.md §5.3). The reference's sky stays cool/purple at the
+    // very top even at sunset — only the horizon glows warm — so skyTop moves
+    // toward blue-violet while skyHorizon gets more saturated orange, not the
+    // uniform warm wash the prior values had. Mountains are now a photo texture,
+    // see scene/mountains.ts.
     lakeTint: '#c08059',
-    skyTop: '#e08f56',
-    skyHorizon: '#f7d2a0',
+    skyTop: '#afb1c5',
+    skyHorizon: '#dc9c65',
     skyBottom: '#e9bc84',
-    mountainNear: '#836654',
-    mountainFar: '#bb9c81',
     fogColor: '#ecc9a2',
     fogNear: 21,
     fogFar: 75,
@@ -262,16 +241,10 @@ function toParams(input: SeasonKeyframeInput): SeasonVisualParams {
   return {
     ...input,
     canopyColor: new THREE.Color(input.canopyColor),
-    groundColor: new THREE.Color(input.groundColor),
-    farShoreColor: new THREE.Color(input.farShoreColor),
-    vegetationColor: new THREE.Color(input.vegetationColor),
-    sheddingColor: new THREE.Color(input.sheddingColor),
     lakeTint: new THREE.Color(input.lakeTint),
     skyTop: new THREE.Color(input.skyTop),
     skyHorizon: new THREE.Color(input.skyHorizon),
     skyBottom: new THREE.Color(input.skyBottom),
-    mountainNear: new THREE.Color(input.mountainNear),
-    mountainFar: new THREE.Color(input.mountainFar),
     fogColor: new THREE.Color(input.fogColor),
     sunColor: new THREE.Color(input.sunColor),
     hemiSky: new THREE.Color(input.hemiSky),

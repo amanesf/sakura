@@ -35,6 +35,9 @@ export interface TreeHandle {
    *  cherry trunks barely move in wind (only the crown does), so unlike the
    *  canopy this has no sway pivot of its own. */
   trunkMesh: THREE.Mesh;
+  /** The two textures trunkMesh.material.map swaps between on season change (see
+   *  setCanopySeasonState) — bare for spring/summer/autumn, frosted for winter. */
+  trunkTextures: { bare: THREE.Texture; frost: THREE.Texture };
   /** Whole-canopy sway pivot, positioned at the crown's own start height on the
    *  trunk — shared by every season's cluster set so switching seasons doesn't
    *  reset the correlated sway. */
@@ -77,6 +80,13 @@ export interface TreeHandle {
 
 const PIXELS_PER_WORLD_UNIT = 140;
 const TRUNK_URL = `${import.meta.env.BASE_URL}textures/trunk/winter.png`;
+// Winter-only frost/snow-coated re-skin of the exact same tree (art-source/trunk/
+// prompts/trunk_winter_frost.txt: an image-to-image edit of TRUNK_URL itself, not a
+// fresh generation — same silhouette/branch structure, just with snow added) shown
+// only when the season dial is on winter (see setCanopySeasonState). The base
+// TRUNK_URL image is reused bare for spring/summer/autumn, where its own canopy
+// cluster cover would make frost invisible anyway.
+const TRUNK_FROST_URL = `${import.meta.env.BASE_URL}textures/trunk/winter_frost.png`;
 
 interface TrunkAsset {
   canvas: HTMLCanvasElement;
@@ -264,7 +274,7 @@ function buildClusterPlacements(
   const pyMin = trunk.contentTopPy - marginPx;
   const pyMax = canopyStartPy;
 
-  const cellPx = 44;
+  const cellPx = 22;
   const cols = Math.max(1, Math.round((pxMax - pxMin) / cellPx));
   const rows = Math.max(1, Math.round((pyMax - pyMin) / cellPx));
   const cellW = (pxMax - pxMin) / cols;
@@ -279,7 +289,7 @@ function buildClusterPlacements(
       const py = gpy + rngRange(rng, -cellH * 0.4, cellH * 0.4);
       if (py > canopyStartPy) continue;
       const c = coverage(px, py, blurRadiusPx);
-      if (c < 0.045) continue;
+      if (c < 0.02) continue;
       const [u, v] = pxToWorld(px, py);
       const radiusWorld = (cellPx / PIXELS_PER_WORLD_UNIT) * rngRange(rng, 0.55, 0.85);
       placements.push({ u, v, radius: radiusWorld, densityKey: rng() });
@@ -293,8 +303,15 @@ function buildClusterPlacements(
 // filling only the middle ~50% of the square frame, generous padding — rather
 // than a chunky pom-pom filling the whole frame, so the plane has to be sized up
 // correspondingly more (≈1/0.5×2 ≈ 4×) from the "content radius" to show that
-// padding without the content itself reading smaller than intended.
-const CLUSTER_PLANE_SCALE = 4.0;
+// padding without the content itself reading smaller than intended. Bumped further
+// (was 4.0) so neighboring clusters overlap enough to hide the bare branches
+// between them — the reference art's canopy reads as near-solid coverage, not
+// discrete separated puffs (season-transition-animation.md 参考画像比較, user
+// direction: "花や葉っぱはもっと多くする必要ある"). Bumped again per a Gemini
+// composition review: branches were still visibly crossing over/in front of the
+// canopy mass, where the reference shows branches only near the trunk and in small
+// gaps — the reference's blossom mass covers the branch structure almost entirely.
+const CLUSTER_PLANE_SCALE = 7.6;
 
 function buildSeasonClusterSet(
   seasonKey: Exclude<CanopySeasonKey, 'winter'>,
@@ -372,8 +389,15 @@ export async function createTree(seed = 20260809): Promise<TreeHandle> {
   const rng = mulberry32(seed);
   const trunk = await loadTrunkAsset(TRUNK_URL);
 
+  const frostTexture = textureLoader.load(TRUNK_FROST_URL);
+  frostTexture.colorSpace = THREE.SRGBColorSpace;
+  frostTexture.wrapS = THREE.ClampToEdgeWrapping;
+  frostTexture.wrapT = THREE.ClampToEdgeWrapping;
+
   const trunkMaterial = new THREE.MeshBasicMaterial({
-    map: trunk.texture,
+    // Defaults to frost since the tree starts on winter (seasonState below) — see
+    // setCanopySeasonState for the swap on later season changes.
+    map: frostTexture,
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
@@ -441,6 +465,7 @@ export async function createTree(seed = 20260809): Promise<TreeHandle> {
   return {
     group,
     trunkMesh,
+    trunkTextures: { bare: trunk.texture, frost: frostTexture },
     canopyPivot,
     seasonClusters,
     seasonState,
@@ -461,6 +486,14 @@ export function setCanopySeasonState(
   tree.seasonState.density = density;
   tree.seasonState.scale = scale;
   tree.canopyPivot.scale.setScalar(scale);
+
+  const trunkMaterial = tree.trunkMesh.material as THREE.MeshBasicMaterial;
+  const wantFrost = seasonKey === 'winter';
+  const wantedTexture = wantFrost ? tree.trunkTextures.frost : tree.trunkTextures.bare;
+  if (trunkMaterial.map !== wantedTexture) {
+    trunkMaterial.map = wantedTexture;
+    trunkMaterial.needsUpdate = true;
+  }
 
   for (const [key, season] of Object.entries(tree.seasonClusters)) {
     const isActive = key === seasonKey;

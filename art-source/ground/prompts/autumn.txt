@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, autumn panel: a warm golden sunset over a pampas grass (susuki) field with fallen leaves.
+
+Generate a seamless autumn ground texture, viewed from a slightly elevated angle, matching the exact warm amber/gold color palette and painterly brushwork of the ground in this reference: dry golden-brown grass and scattered fallen leaves (red, orange, brown) over warm-toned soil.
+
+Requirements:
+- No sky, no water, no tree trunk, no people, no tall pampas grass stalks (those are handled separately) — an even, all-over ground/leaf-litter surface texture.
+- No single strong directional shadow across the whole frame (this will be lit dynamically in a 3D scene) — keep the lighting soft and fairly even so it can tile.
+- Same painterly texture and warm sunset color grading as the reference.
+- Square aspect ratio, texture filling the entire frame edge to edge.

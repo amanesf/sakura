@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32, rngRange } from '../core/prng';
 import { LEAF_DETACH_THRESHOLD, resolveLeafMotionState } from '../core/timeField';
+import type { SeasonId } from '../seasons/seasonState';
 
 export interface SheddingInstanceBase {
   originX: number;
@@ -30,7 +31,7 @@ export interface SheddingSeasonState {
 
 export interface SheddingHandle {
   mesh: THREE.InstancedMesh;
-  material: THREE.MeshStandardMaterial;
+  material: THREE.MeshBasicMaterial;
   instances: SheddingInstanceBase[];
   seasonState: SheddingSeasonState;
 }
@@ -40,6 +41,31 @@ const CANOPY_CENTER_Y = 5.6;
 const CANOPY_RADIUS = 1.9;
 const CANOPY_VERTICAL_SPREAD = 0.9;
 const GROUND_Y = 0.05;
+
+// Gemini-generated petal (spring) / leaf (autumn) sprites (art-source/shedding/,
+// chroma-key extracted from a blue-background generation — see
+// art-source/shedding/prompts/), replacing the earlier flat-colored square plane
+// per agent-workflow-policy.md §1.5. Winter/summer never shed (sheddingSensitivity
+// is 0 in both, see seasonState.ts), so they don't need their own sprite — the
+// texture just stays whatever it last was, invisible either way.
+const SHEDDING_TEXTURE_FILES: Partial<Record<SeasonId, string>> = {
+  spring: 'spring_petal.png',
+  autumn: 'autumn_leaf.png',
+};
+
+const sheddingTextureCache = new Map<string, THREE.Texture>();
+const sheddingTextureLoader = new THREE.TextureLoader();
+
+function loadSheddingTexture(file: string): THREE.Texture {
+  const cached = sheddingTextureCache.get(file);
+  if (cached) return cached;
+  const texture = sheddingTextureLoader.load(`${import.meta.env.BASE_URL}textures/shedding/${file}`);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  sheddingTextureCache.set(file, texture);
+  return texture;
+}
 
 /**
  * The falling-petal/falling-leaf layer for 桜吹雪 and 落葉 (season-transition-
@@ -52,12 +78,12 @@ const GROUND_Y = 0.05;
 export function createSheddingParticles(seed = 4021): SheddingHandle {
   const rng = mulberry32(seed);
 
-  const petalGeometry = new THREE.PlaneGeometry(0.09, 0.09);
-  const material = new THREE.MeshStandardMaterial({
-    color: '#f0a8c0',
-    roughness: 0.8,
+  const petalGeometry = new THREE.PlaneGeometry(0.16, 0.16);
+  const material = new THREE.MeshBasicMaterial({
+    map: loadSheddingTexture('spring_petal.png'),
     side: THREE.DoubleSide,
     transparent: true,
+    depthWrite: false,
   });
 
   const mesh = new THREE.InstancedMesh(petalGeometry, material, INSTANCE_COUNT);
@@ -134,8 +160,17 @@ export function updateSheddingParticles(
   mesh.instanceMatrix.needsUpdate = true;
 }
 
-export function setSheddingSeasonState(shedding: SheddingHandle, sensitivity: number): void {
+export function setSheddingSeasonState(
+  shedding: SheddingHandle,
+  seasonId: SeasonId,
+  sensitivity: number,
+): void {
   shedding.seasonState.sensitivity = sensitivity;
+  const file = SHEDDING_TEXTURE_FILES[seasonId];
+  if (file) {
+    shedding.material.map = loadSheddingTexture(file);
+    shedding.material.needsUpdate = true;
+  }
 }
 
 export function updateSheddingAnimation(

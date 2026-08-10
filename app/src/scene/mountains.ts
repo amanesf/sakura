@@ -1,9 +1,9 @@
 import * as THREE from 'three';
-import { mulberry32, rngRange, type Rng } from '../core/prng';
+import type { SeasonId } from '../seasons/seasonState';
 
 export interface MountainLayer {
   mesh: THREE.Mesh;
-  material: THREE.MeshLambertMaterial;
+  material: THREE.MeshBasicMaterial;
 }
 
 export interface MountainsHandle {
@@ -11,138 +11,93 @@ export interface MountainsHandle {
   layers: MountainLayer[];
 }
 
-/**
- * Builds one ridge silhouette as a flat skyline strip: a smooth-noise top edge and a
- * flat bottom edge well below the horizon, so it always reads as a solid mountain mass
- * regardless of camera framing.
- */
-function buildRidgeGeometry(
-  rng: Rng,
-  width: number,
-  segments: number,
-  baseHeight: number,
-  jitter: number,
-  bottomY: number,
-): THREE.BufferGeometry {
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const heights: number[] = [];
+// One Gemini-generated ridge silhouette per season (art-source/mountains/, chroma-key
+// extracted from a blue-background generation — see art-source/mountains/prompts/),
+// replacing the earlier procedural sine-noise ridge + Canvas2D blotch texture per
+// agent-workflow-policy.md §1.5. The source image is a 1376x768 (~16:9) frame with
+// the ridge occupying roughly its lower 55-60% and a transparent (chroma-keyed) band
+// above — IMAGE_ASPECT/RIDGE_TOP_FRACTION below describe that layout so the plane
+// geometry can size and position itself without a hardcoded per-season guess.
+const IMAGE_ASPECT = 1376 / 768;
 
-  // Smooth ridge line via a few summed sine waves with random phase/frequency,
-  // cheaper than real noise and plenty convincing at this silhouette scale.
-  const waveCount = 4;
-  const waves = Array.from({ length: waveCount }, () => ({
-    freq: rngRange(rng, 0.6, 3.2),
-    phase: rngRange(rng, 0, Math.PI * 2),
-    amp: rngRange(rng, 0.25, 1) / waveCount,
-  }));
+const MOUNTAIN_TEXTURE_FILES: Record<SeasonId, string> = {
+  winter: 'winter.png',
+  spring: 'spring.png',
+  summer: 'summer.png',
+  autumn: 'autumn.png',
+};
 
-  for (let i = 0; i <= segments; i++) {
-    const u = i / segments;
-    const x = -width / 2 + width * u;
-    let n = 0;
-    for (const w of waves) {
-      n += Math.sin(u * Math.PI * w.freq + w.phase) * w.amp;
-    }
-    const topY = baseHeight + n * jitter;
-    heights.push(topY);
-    positions.push(x, topY, 0, x, bottomY, 0);
-    uvs.push(u, 1, u, 0);
-  }
+const mountainTextureCache = new Map<SeasonId, THREE.Texture>();
+const mountainTextureLoader = new THREE.TextureLoader();
 
-  const indices: number[] = [];
-  for (let i = 0; i < segments; i++) {
-    const a = i * 2;
-    const b = i * 2 + 1;
-    const c = a + 2;
-    const d = b + 2;
-    indices.push(a, b, c, b, d, c);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
-
-/**
- * A flat single color reads as a paper cutout once real texture (the tree) sits in
- * front of it. This bakes a soft vertical gradient — lighter/hazier toward the
- * ridge top (v=1, ties into distance haze), a touch richer toward the base (v=0)
- * — plus faint blotchy variation suggesting distant tree cover, fading out near
- * the peak where real ridgelines read smoother/hazier. Grayscale only (like
- * ground.ts's mottling): the season's hue still comes entirely from
- * `material.color`, this just breaks up the flatness underneath it. The geometry's
- * own UVs already run v=0 at the flat bottom edge to v=1 at the ridge line, so this
- * maps directly with no extra bookkeeping.
- */
-function createRidgeTexture(seed: number, size = 256): THREE.Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-
-  const grad = ctx.createLinearGradient(0, 0, 0, size);
-  grad.addColorStop(0, 'rgb(255,255,255)');
-  grad.addColorStop(1, 'rgb(196,196,196)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-
-  const rng = mulberry32(seed);
-  const blotchCount = 140;
-  for (let i = 0; i < blotchCount; i++) {
-    const x = rngRange(rng, 0, size);
-    const y = rngRange(rng, size * 0.15, size);
-    // Fade blotch opacity out near the ridge top (small y) for a hazier peak.
-    const heightT = y / size;
-    const r = rngRange(rng, size * 0.02, size * 0.075);
-    const v = Math.round(rngRange(rng, 150, 220));
-    const alpha = rngRange(rng, 0.18, 0.4) * THREE.MathUtils.smoothstep(heightT, 0.05, 0.4);
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
-    gradient.addColorStop(0, `rgba(${v},${v},${v},${alpha})`);
-    gradient.addColorStop(1, `rgba(${v},${v},${v},0)`);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
+function loadMountainTexture(season: SeasonId): THREE.Texture {
+  const cached = mountainTextureCache.get(season);
+  if (cached) return cached;
+  const url = `${import.meta.env.BASE_URL}textures/mountains/${MOUNTAIN_TEXTURE_FILES[season]}`;
+  const texture = mountainTextureLoader.load(url);
   texture.colorSpace = THREE.SRGBColorSpace;
+  mountainTextureCache.set(season, texture);
   return texture;
 }
 
 /**
- * Two layered ridgelines behind the lake (season-transition-animation.md §6: rear-most
- * "遠景" layer). Fog-blended rather than lit realistically — at this distance
- * atmospheric perspective reads more convincingly than real shading.
+ * Two ridgeline image-planes behind the lake (season-transition-animation.md §6:
+ * rear-most "遠景" layer) — same two-layer parallax the procedural version had (a
+ * closer, larger-scale ridge occluding most of a further, larger one, leaving only
+ * its peaks poking above), now both textured with the actual generated art instead
+ * of a noise ridge. `bottomY` anchors each plane's bottom edge (the image's own flat
+ * crop edge) at the same world height the procedural version's flat bottom used.
  */
-export function createMountains(seed = 20260809): MountainsHandle {
-  const rng = mulberry32(seed);
+export function createMountains(): MountainsHandle {
   const group = new THREE.Group();
   const layers: MountainLayer[] = [];
 
+  // width/bottomY solved per layer by ray-casting the actual fixed camera
+  // (core/camera.ts) through screen-space targets — full screen width (plus
+  // margin) at that depth, ridge band anchored to COMPOSITION-REFERENCE.md §1's
+  // measured winter mountain band (y≈40-58%) — rather than reused from the old
+  // procedural ridge's config, which was sized for a since-changed, much wider fov.
+  // x offsets shift each plane to fully cover the frustum at its depth — the fixed
+  // camera (core/camera.ts) is panned off world-x=0, so a plane centered on x=0
+  // doesn't sit centered in view; solved the same way as width/bottomY, by
+  // projecting each plane's edges through the actual camera and checking coverage.
   const configs = [
-    // Near layer's base sits close to the far layer's so it occludes most of the
-    // far ridge's flat body, leaving only its jagged peaks poking above — otherwise
-    // the exposed far "wall" reads as a flat pale band instead of a mountain shape.
-    { z: -30, width: 140, base: 15, jitter: 4.5, color: '#7f9a8e', bottomY: -4, seed: 4101 },
-    { z: -48, width: 200, base: 17.5, jitter: 6, color: '#a3b9c0', bottomY: -4, seed: 4102 },
+    { z: -30, width: 16.8, bottomY: -1.6, x: -3.35 },
+    { z: -48, width: 20.4, bottomY: -3.3, x: -4.6 },
   ];
 
+  const initialTexture = loadMountainTexture('winter');
+
   for (const cfg of configs) {
-    const geometry = buildRidgeGeometry(rng, cfg.width, 48, cfg.base, cfg.jitter, cfg.bottomY);
-    const material = new THREE.MeshLambertMaterial({
-      color: cfg.color,
-      map: createRidgeTexture(cfg.seed),
-      fog: true,
-      flatShading: true,
+    const height = cfg.width / IMAGE_ASPECT;
+    const geometry = new THREE.PlaneGeometry(cfg.width, height);
+    const material = new THREE.MeshBasicMaterial({
+      map: initialTexture,
+      transparent: true,
+      depthWrite: false,
+      // The generated art already bakes in its own atmospheric haze (see the
+      // prompts in art-source/mountains/prompts/) — scene fog on top of that
+      // doubled up and washed the ridge out to near-nothing at this distance.
+      fog: false,
     });
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.z = cfg.z;
+    mesh.position.set(cfg.x, cfg.bottomY + height / 2, cfg.z);
     group.add(mesh);
     layers.push({ mesh, material });
   }
 
   return { group, layers };
+}
+
+/** Called by the season system (依頼A') on season change — swaps each layer's ridge
+ *  photo. Both layers currently share the same single generated image per season
+ *  (COMPOSITION-REFERENCE.md only measured one combined near/far mountain color; see
+ *  seasonState.ts's mountainNear/mountainFar comments) — the two-plane parallax
+ *  still holds since they're independently scaled/positioned. */
+export function setMountainsSeasonState(mountains: MountainsHandle, seasonId: SeasonId): void {
+  const texture = loadMountainTexture(seasonId);
+  for (const layer of mountains.layers) {
+    layer.material.map = texture;
+    layer.material.needsUpdate = true;
+  }
 }

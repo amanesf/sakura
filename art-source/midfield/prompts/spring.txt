@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, spring panel: between the hazy mountains and the near meadow, there is a distinct bright band of dense yellow rapeseed/nanohana flowers stretching across the whole width, with a few small distant cherry trees dotted along it.
+
+Generate a seamless distant flower-field texture matching this exact band: a dense, almost solid carpet of small bright yellow flowers with hints of green stems beneath, painted in a soft hazy painterly style as if seen from a distance (softer/less detailed than close-up grass), matching the reference's warm golden-hour lighting.
+
+Requirements:
+- No sky, no mountains, no tree, no near-ground grass texture — just the dense yellow flower-field band itself.
+- Fairly flat/even in tone (distance haze softens contrast) so it can tile horizontally without an obvious seam.
+- Square aspect ratio, texture filling the entire frame edge to edge.

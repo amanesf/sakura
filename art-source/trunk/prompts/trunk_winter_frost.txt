@@ -1,0 +1,8 @@
+The input image shows a bare tree (trunk and branches) on a solid pure blue background.
+
+Edit this EXACT tree — keep the precise same silhouette, branch structure, trunk lean, proportions and camera framing, do not change the pose or shape or crop in any way — and add a light dusting of snow and white frost/rime clinging to the branches and twigs, as if this tree were photographed in winter after a light snowfall. The bark should still be visible underneath, just frosted, with small clumps of snow sitting along the tops of branches and delicate white frost/ice crystal texture on the twigs, like a winter tree in a soft painterly illustration.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere on the tree itself.
+- Do NOT change the silhouette, branch positions, trunk shape, or image dimensions/crop — only add the frost/snow coating on top of the existing branches.
+- Same painterly brush texture as the input, just with added cool-toned snow/frost.

@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { mulberry32, rngRange } from '../core/prng';
+import { CAMERA_POSITION, CAMERA_LOOK_AT } from '../core/camera';
+import { NEAR_SHORE_FAR_EDGE_Z } from './ground';
+import type { SeasonId } from '../seasons/seasonState';
 
 export interface VegetationInstanceBase {
   x: number;
@@ -18,66 +21,95 @@ export interface VegetationSeasonState {
 
 export interface VegetationHandle {
   mesh: THREE.InstancedMesh;
-  material: THREE.MeshStandardMaterial;
+  material: THREE.MeshBasicMaterial;
   instances: VegetationInstanceBase[];
   seasonState: VegetationSeasonState;
 }
 
-const INSTANCE_COUNT = 900;
-const PATCH_CENTER = new THREE.Vector2(0, -1.4);
-const PATCH_RADIUS = 3.3;
-const TRUNK_EXCLUSION_RADIUS = 0.55;
+// Count bumped (was 260) so density holds up over the larger elliptical patch
+// below. TRUNK_EXCLUSION_RADIUS shrunk hard (was 0.55) — grass is meant to grow
+// right up against the trunk and hide its base/ground seam, not leave a bare ring
+// around it (user direction: "木の根元は草とかで隠すこと").
+const INSTANCE_COUNT = 950;
+// Elliptical, not circular (was a single PATCH_RADIUS=6.2) — wide in X to reach
+// across ground.ts's now much wider plane, but shallow in Z and pulled forward
+// (center.y > 0, toward the camera) so the patch's far edge never crosses
+// NEAR_SHORE_FAR_EDGE_Z into the lake — past that line there's no ground mesh at
+// all, so anything placed there floats directly over the Reflector with no ground
+// beneath it (an actual visible bug found by screenshot, not just a Gemini
+// composition-review guess: a wide-enough circle put tufts hovering over open
+// water, doubled by the lake's own reflection into a bizarre floating band).
+const PATCH_RADIUS_Z = 2.8;
+const GROUND_SAFETY_MARGIN = 1.0;
+const PATCH_CENTER = new THREE.Vector2(0, NEAR_SHORE_FAR_EDGE_Z + GROUND_SAFETY_MARGIN + PATCH_RADIUS_Z);
+const PATCH_RADIUS_X = 9.5;
+const TRUNK_EXCLUSION_RADIUS = 0.12;
+
+// One Gemini-generated grass/flower tuft per season (art-source/vegetation/,
+// chroma-key extracted from a blue-background generation — see
+// art-source/vegetation/prompts/), replacing the earlier flat-colored procedural
+// blade plane per agent-workflow-policy.md §1.5. Each instance is a camera-facing
+// billboard showing this tuft rather than a single tinted rectangle — fewer
+// instances than the old per-blade approach (INSTANCE_COUNT above), since one tuft
+// image already reads as several blades.
+const VEGETATION_TEXTURE_FILES: Record<SeasonId, string> = {
+  winter: 'winter.png',
+  spring: 'spring.png',
+  summer: 'summer.png',
+  autumn: 'autumn.png',
+};
+
+const vegetationTextureCache = new Map<SeasonId, THREE.Texture>();
+const vegetationTextureLoader = new THREE.TextureLoader();
+
+function loadVegetationTexture(season: SeasonId): THREE.Texture {
+  const cached = vegetationTextureCache.get(season);
+  if (cached) return cached;
+  const url = `${import.meta.env.BASE_URL}textures/vegetation/${VEGETATION_TEXTURE_FILES[season]}`;
+  const texture = vegetationTextureLoader.load(url);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  vegetationTextureCache.set(season, texture);
+  return texture;
+}
 
 /**
- * Foreground shore vegetation (season-transition-animation.md §5): one generic blade
- * silhouette whose color/height/density crossfades per season (依頼A') rather than
- * swapping in botanically distinct flower/pampas-grass geometry — the same
- * placeholder-detail tradeoff as the canopy's icosahedron clusters, left for a later
- * polish pass. Each blade's geometry is translated so its base sits at the local
- * origin, so per-instance *rotation* (not position) reads as "rooted at the base,
- * swaying at the tip" (§4 table, row "手前の草花").
+ * Foreground shore vegetation (season-transition-animation.md §5): instanced
+ * camera-facing tuft billboards whose *texture* crossfades per season (依頼A',
+ * setVegetationSeasonState below) rather than a flat material color — the same
+ * generated-image technique tree.ts's canopy clusters use. Each tuft's geometry is
+ * anchored so its root sits at the local origin, so per-instance *rotation* (not
+ * position) still reads as "rooted at the base, swaying at the tip" (§4 table, row
+ * "手前の草花").
  */
 export function createVegetation(seed = 71): VegetationHandle {
   const rng = mulberry32(seed);
 
-  // A per-vertex brightness gradient (root darker, tip lighter) baked once here —
-  // a single flat material color on 900 identical blades reads as a uniform green
-  // rug; this alone gives each blade a base-to-tip highlight like real grass
-  // catching light at the tip, without needing per-blade geometry variation.
-  const bladeGeometry = new THREE.PlaneGeometry(0.07, 1, 1, 3);
-  bladeGeometry.translate(0, 0.5, 0);
-  {
-    const pos = bladeGeometry.attributes.position;
-    const colors = new Float32Array(pos.count * 3);
-    for (let i = 0; i < pos.count; i++) {
-      const t = THREE.MathUtils.clamp(pos.getY(i), 0, 1);
-      const shade = THREE.MathUtils.lerp(0.72, 1.15, t);
-      colors[i * 3] = shade;
-      colors[i * 3 + 1] = shade;
-      colors[i * 3 + 2] = shade;
-    }
-    bladeGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  }
+  // Root-anchored plane: translate so the bottom edge (where the tuft's blades meet
+  // the ground in the generated image) sits at y=0, matching the old geometry's
+  // "rotate around the base" pivot.
+  const tuftGeometry = new THREE.PlaneGeometry(0.9, 0.9);
+  tuftGeometry.translate(0, 0.45, 0);
 
-  const material = new THREE.MeshStandardMaterial({
-    color: '#4f9b3d',
-    roughness: 0.9,
+  const material = new THREE.MeshBasicMaterial({
+    map: loadVegetationTexture('winter'),
+    transparent: true,
+    depthWrite: false,
     side: THREE.DoubleSide,
-    vertexColors: true,
   });
 
-  const mesh = new THREE.InstancedMesh(bladeGeometry, material, INSTANCE_COUNT);
+  const mesh = new THREE.InstancedMesh(tuftGeometry, material, INSTANCE_COUNT);
 
   const instances: VegetationInstanceBase[] = [];
-  const instColor = new THREE.Color();
   let built = 0;
   let attempts = 0;
   while (built < INSTANCE_COUNT && attempts < INSTANCE_COUNT * 20) {
     attempts++;
     const angle = rngRange(rng, 0, Math.PI * 2);
-    const r = Math.sqrt(rng()) * PATCH_RADIUS;
-    const x = PATCH_CENTER.x + Math.cos(angle) * r;
-    const z = PATCH_CENTER.y + Math.sin(angle) * r;
+    const r = Math.sqrt(rng());
+    const x = PATCH_CENTER.x + Math.cos(angle) * r * PATCH_RADIUS_X;
+    const z = PATCH_CENTER.y + Math.sin(angle) * r * PATCH_RADIUS_Z;
     if (Math.hypot(x, z) < TRUNK_EXCLUSION_RADIUS) continue;
 
     instances.push({
@@ -89,16 +121,8 @@ export function createVegetation(seed = 71): VegetationHandle {
       swayPhase: rngRange(rng, 0, Math.PI * 2),
       swayAmplitude: rngRange(rng, 0.7, 1.3),
     });
-    // Slight per-blade brightness jitter so the patch reads as many individual
-    // blades rather than one uniform mass — grayscale only, like the vertex
-    // gradient above: a fixed saturated hue here would fight the season's actual
-    // tint (material.color), e.g. staining winter's pale grass green.
-    const shade = rngRange(rng, 0.78, 1.12);
-    instColor.setRGB(shade, shade, shade);
-    mesh.setColorAt(built, instColor);
     built++;
   }
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
   const seasonState: VegetationSeasonState = { density: 1, height: 1 };
   updateVegetationInstances(mesh, instances, seasonState, 0, 0);
@@ -107,12 +131,21 @@ export function createVegetation(seed = 71): VegetationHandle {
 }
 
 const vegDummy = new THREE.Object3D();
+// Tuft billboards face the fixed camera (core/camera.ts) directly rather than
+// tracking it every frame — the camera never moves (season-transition-animation.md
+// §1's "定点観測"), so this quaternion, computed once from the same camera
+// constants tree.ts's canopy clusters use, stays correct for the whole session.
+const VEGETATION_BILLBOARD_ALIGN = new THREE.Quaternion().setFromUnitVectors(
+  new THREE.Vector3(0, 0, 1),
+  CAMERA_POSITION.clone().sub(CAMERA_LOOK_AT).normalize(),
+);
 
 /**
- * Rebuilds every blade's matrix from its baked base placement plus the current
+ * Rebuilds every tuft's matrix from its baked base placement plus the current
  * season density/height (依頼A') and time-field sway (依頼B) — kept in lockstep
  * with the tree's own sway (see tree.ts's `updateTreeAnimation`) so both layers
- * visibly nod to the same field.
+ * visibly nod to the same field. `headingY` now only jitters each tuft's roll
+ * around the camera-facing normal (a billboard has no "facing" left to vary).
  */
 export function updateVegetationInstances(
   mesh: THREE.InstancedMesh,
@@ -127,15 +160,13 @@ export function updateVegetationInstances(
     const visible = inst.densityKey < density;
 
     vegDummy.position.set(inst.x, 0.04, inst.z);
-    vegDummy.rotation.set(0, inst.headingY, 0);
-    // Root-pivoted sway: rotating (not translating) the instance bends the blade
+    vegDummy.quaternion.copy(VEGETATION_BILLBOARD_ALIGN);
+    vegDummy.rotateZ(inst.headingY);
+    // Root-pivoted sway: rotating (not translating) the instance bends the tuft
     // around its base, which sits at the local origin after the geometry translate.
     const sway =
       Math.sin(time * 1.9 + inst.swayPhase) * 0.22 * inst.swayAmplitude * fieldStrength;
     vegDummy.rotateZ(sway);
-    vegDummy.rotateX(
-      Math.cos(time * 1.5 + inst.swayPhase * 1.4) * 0.12 * inst.swayAmplitude * fieldStrength,
-    );
     vegDummy.scale.set(
       visible ? inst.baseScale : 0,
       visible ? inst.baseScale * height : 0,
@@ -149,11 +180,14 @@ export function updateVegetationInstances(
 
 export function setVegetationSeasonState(
   vegetation: VegetationHandle,
+  seasonId: SeasonId,
   density: number,
   height: number,
 ): void {
   vegetation.seasonState.density = density;
   vegetation.seasonState.height = height;
+  vegetation.material.map = loadVegetationTexture(seasonId);
+  vegetation.material.needsUpdate = true;
 }
 
 export function updateVegetationAnimation(

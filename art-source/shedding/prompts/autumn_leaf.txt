@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, autumn panel: deep red and orange autumn leaves falling and scattered in the air near sunset.
+
+Generate ONE isolated single falling autumn leaf (a small maple-style leaf in warm red/orange color, slightly curled as if falling), as if cropped directly from the falling leaves in that autumn panel. Match the exact painterly style and warm color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere on the leaf itself.
+- One single leaf, centered, soft natural edges, no other leaves in frame.
+- Square aspect ratio, leaf filling about half the frame with padding around it.

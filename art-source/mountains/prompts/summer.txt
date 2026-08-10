@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, summer panel: vivid green forested mountains under bright summer sunlight, seen beyond rice paddies.
+
+Generate an isolated distant mountain ridgeline silhouette, matching the exact color, atmospheric haze and painterly style of the mountains in this reference: rich saturated green forested slopes, fading to a pale blue-green haze near the base.
+
+Requirements:
+- Background above and around the ridge must be solid flat pure blue (#0000FF), completely uniform, no gradient, for chroma-key extraction. The blue must not appear anywhere in the mountains themselves.
+- A wide horizontal band of overlapping mountain ridges with rolling, forested peaks reaching up from a flat bottom edge, filling roughly the lower half of the frame, sky/background area (pure blue) filling the upper half.
+- Same painterly brushwork and vivid saturated color grading as the reference.
+- Wide rectangular aspect ratio (16:9), ridge silhouette spanning the full width.

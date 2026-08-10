@@ -1,0 +1,8 @@
+{
+  "name": "sakura-art-source",
+  "private": true,
+  "description": "Root-level tooling for generating/processing art-source/ assets (scripts/gemini_call.js, art-source/canopy-clusters/chromakey.js). The app itself lives in app/.",
+  "dependencies": {
+    "sharp": "^0.35.3"
+  }
+}

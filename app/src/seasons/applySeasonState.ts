@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { Composition } from '../scene/composition';
 import { setCanopySeasonState } from '../scene/tree';
+import { setGroundSeasonState } from '../scene/ground';
+import { setMountainsSeasonState } from '../scene/mountains';
 import { setVegetationSeasonState } from '../scene/vegetation';
 import { setFlowerSeasonState } from '../scene/flowers';
 import { setSheddingSeasonState } from '../scene/sheddingParticles';
@@ -31,16 +33,13 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
 
   setCanopySeasonState(tree, params.id, params.canopyDensity, params.canopyScale);
 
-  vegetation.material.color.copy(params.vegetationColor);
-  setVegetationSeasonState(vegetation, params.vegetationDensity, params.vegetationHeight);
+  setVegetationSeasonState(vegetation, params.id, params.vegetationDensity, params.vegetationHeight);
 
   setFlowerSeasonState(flowers, params.flowerDensity);
 
-  shedding.material.color.copy(params.sheddingColor);
-  setSheddingSeasonState(shedding, params.sheddingSensitivity);
+  setSheddingSeasonState(shedding, params.id, params.sheddingSensitivity);
 
-  ground.nearShoreMaterial.color.copy(params.groundColor);
-  ground.farShoreMaterial.color.copy(params.farShoreColor);
+  setGroundSeasonState(ground, params.id);
 
   (lake.mesh.material as THREE.ShaderMaterial).uniforms.color.value.copy(params.lakeTint);
 
@@ -50,8 +49,7 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
   sky.material.uniforms.uSunColor.value.copy(params.sunColor);
   sky.material.uniforms.uCloudDensity.value = CLOUD_DENSITY[params.id];
 
-  mountains.layers[0].material.color.copy(params.mountainNear);
-  mountains.layers[1].material.color.copy(params.mountainFar);
+  setMountainsSeasonState(mountains, params.id);
 
   if (scene.fog instanceof THREE.Fog) {
     scene.fog.color.copy(params.fogColor);
