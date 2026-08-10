@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, spring panel: a cherry tree in bloom over a meadow of green grass, yellow rapeseed/dandelion flowers, and scattered pink petals.
+
+Generate a seamless spring meadow ground texture, viewed from a slightly elevated angle, matching the exact color palette and painterly brushwork of the flower meadow in this reference: bright green grass dotted with small clusters of yellow flowers and a few pink petals resting on the grass.
+
+Requirements:
+- No sky, no water, no tree trunk, no people — an even, all-over meadow surface texture.
+- No single strong directional shadow across the whole frame (this will be lit dynamically in a 3D scene) — keep the lighting soft and fairly even so it can tile.
+- Same painterly texture and pastel-bright color grading as the reference.
+- Square aspect ratio, texture filling the entire frame edge to edge.

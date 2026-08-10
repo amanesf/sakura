@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mulberry32, rngRange } from '../core/prng';
+import type { SeasonId } from '../seasons/seasonState';
 
 export interface GroundHandle {
   nearShore: THREE.Mesh;
@@ -10,9 +10,10 @@ export interface GroundHandle {
 
 /**
  * A soft radial falloff (opaque center, transparent rim) so the near shore blends
- * into the lake instead of reading as a hard-edged coin — generated at runtime via
- * Canvas2D rather than an imported asset (agent-workflow-policy.md §10-A: no
- * external art files).
+ * into the lake instead of reading as a hard-edged coin. This is a blend mask, not a
+ * visual asset in its own right (agent-workflow-policy.md §1.5 bans procedural
+ * *imagery* — invented colors/textures standing in for the reference art — not
+ * utility gradients like this one), so it's still generated at runtime via Canvas2D.
  */
 function createRadialFadeTexture(): THREE.Texture {
   const size = 256;
@@ -38,57 +39,33 @@ function createRadialFadeTexture(): THREE.Texture {
   return texture;
 }
 
-/**
- * A flat single `color` reads as painted plastic once anything textured (the tree,
- * the canopy) sits next to it. This bakes brightness-only mottling — never above
- * white, since MeshStandardMaterial can only darken a flat color through `map`, not
- * lighten past it — as overlapping soft blotches of varying size, so the ground
- * multiplies out to patches of slightly different tone instead of one flat wash.
- * Grayscale on purpose (like tree.ts's old canopy tiers): the season's actual hue
- * still comes entirely from `material.color`, this only breaks up its flatness.
- */
-function createMottledTexture(seed: number, size: number, blotchCount: number): THREE.Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, size, size);
+// One Gemini-generated ground texture per season (art-source/ground/, cropped from
+// each reference panel's own ground area — see art-source/ground/prompts/) —
+// replacing the earlier Canvas2D mottled-blotch approach per
+// agent-workflow-policy.md §1.5 (no procedurally-invented ground texture/color).
+const GROUND_TEXTURE_FILES: Record<SeasonId, string> = {
+  winter: 'winter.jpg',
+  spring: 'spring.jpg',
+  summer: 'summer.jpg',
+  autumn: 'autumn.jpg',
+};
 
-  const rng = mulberry32(seed);
-  for (let i = 0; i < blotchCount; i++) {
-    const x = rngRange(rng, 0, size);
-    const y = rngRange(rng, 0, size);
-    const r = rngRange(rng, size * 0.02, size * 0.09);
-    const v = Math.round(rngRange(rng, 148, 255));
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
-    gradient.addColorStop(0, `rgba(${v},${v},${v},0.55)`);
-    gradient.addColorStop(1, `rgba(${v},${v},${v},0)`);
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, size, size);
-  }
+// Near and far shore need independently-tiled copies of the same season's texture
+// (far shore repeats 6x horizontally, near shore doesn't) — two caches so each gets
+// its own THREE.Texture instance rather than fighting over one shared `.repeat`.
+const nearTextureCache = new Map<SeasonId, THREE.Texture>();
+const farTextureCache = new Map<SeasonId, THREE.Texture>();
+const groundTextureLoader = new THREE.TextureLoader();
 
-  // A few short streak-like darker strokes on top for a hint of grass-blade/soil
-  // texture at close range, not just round blotches.
-  for (let i = 0; i < blotchCount * 0.25; i++) {
-    const x = rngRange(rng, 0, size);
-    const y = rngRange(rng, 0, size);
-    const len = rngRange(rng, size * 0.015, size * 0.045);
-    const angle = rngRange(rng, 0, Math.PI * 2);
-    const v = Math.round(rngRange(rng, 150, 210));
-    ctx.strokeStyle = `rgba(${v},${v},${v},0.35)`;
-    ctx.lineWidth = rngRange(rng, 1, 2.2);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
-    ctx.stroke();
-  }
-
-  const texture = new THREE.CanvasTexture(canvas);
+function loadGroundTexture(season: SeasonId, cache: Map<SeasonId, THREE.Texture>): THREE.Texture {
+  const cached = cache.get(season);
+  if (cached) return cached;
+  const url = `${import.meta.env.BASE_URL}textures/ground/${GROUND_TEXTURE_FILES[season]}`;
+  const texture = groundTextureLoader.load(url);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
+  cache.set(season, texture);
   return texture;
 }
 
@@ -96,17 +73,18 @@ function createMottledTexture(seed: number, size: number, blotchCount: number): 
  * Two ground pieces bracket the lake (see scene/lake.ts for the water plane the tree
  * sits at the edge of): the near shore/peninsula the tree roots into, and a thin far
  * shore band before the mountains — the strip §6.1 (season-transition-animation.md)
- * later places the distant girl silhouette on.
+ * later places the distant girl silhouette on. Both start on the winter texture;
+ * setGroundSeasonState swaps the `map` on season change (依頼A').
  */
 export function createGround(): GroundHandle {
   const fadeTexture = createRadialFadeTexture();
-  const nearMottle = createMottledTexture(9001, 512, 260);
+  const initialTexture = loadGroundTexture('winter', nearTextureCache);
 
   const nearShoreGeometry = new THREE.CircleGeometry(4.4, 48);
   const nearShoreMaterial = new THREE.MeshStandardMaterial({
-    color: '#6f8f5a',
+    color: '#ffffff',
     roughness: 1,
-    map: nearMottle,
+    map: initialTexture,
     alphaMap: fadeTexture,
     transparent: true,
   });
@@ -114,18 +92,31 @@ export function createGround(): GroundHandle {
   nearShore.rotation.x = -Math.PI / 2;
   nearShore.position.set(0, 0.03, -2);
 
-  const farMottle = createMottledTexture(9002, 512, 200);
-  farMottle.repeat.set(6, 1);
+  const farTexture = loadGroundTexture('winter', farTextureCache);
+  farTexture.repeat.set(6, 1);
 
   const farShoreGeometry = new THREE.PlaneGeometry(60, 6);
   const farShoreMaterial = new THREE.MeshStandardMaterial({
-    color: '#5f7d55',
+    color: '#ffffff',
     roughness: 1,
-    map: farMottle,
+    map: farTexture,
   });
   const farShore = new THREE.Mesh(farShoreGeometry, farShoreMaterial);
   farShore.rotation.x = -Math.PI / 2;
   farShore.position.set(0, 0.02, -19);
 
   return { nearShore, nearShoreMaterial, farShore, farShoreMaterial };
+}
+
+/** Called by the season system (依頼A') whenever the dial settles on a new season —
+ *  swaps the ground photo rather than tinting a flat procedural texture. The far
+ *  shore's own loaded copy keeps its independent repeat.set(6,1) tiling. */
+export function setGroundSeasonState(ground: GroundHandle, seasonId: SeasonId): void {
+  ground.nearShoreMaterial.map = loadGroundTexture(seasonId, nearTextureCache);
+  ground.nearShoreMaterial.needsUpdate = true;
+
+  const farTexture = loadGroundTexture(seasonId, farTextureCache);
+  farTexture.repeat.set(6, 1);
+  ground.farShoreMaterial.map = farTexture;
+  ground.farShoreMaterial.needsUpdate = true;
 }

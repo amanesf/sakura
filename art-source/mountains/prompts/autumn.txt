@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, autumn panel: mountains glowing gold in a warm sunset, seen beyond a pampas grass field.
+
+Generate an isolated distant mountain ridgeline silhouette, matching the exact color, atmospheric haze and painterly style of the mountains in this reference: warm golden-amber slopes backlit by the sunset, almost glowing, fading into a soft warm haze near the base.
+
+Requirements:
+- Background above and around the ridge must be solid flat pure blue (#0000FF), completely uniform, no gradient, for chroma-key extraction. The blue must not appear anywhere in the mountains themselves.
+- A wide horizontal band of overlapping mountain ridges with rolling peaks reaching up from a flat bottom edge, filling roughly the lower half of the frame, sky/background area (pure blue) filling the upper half.
+- Same painterly brushwork and warm sunset color grading as the reference.
+- Wide rectangular aspect ratio (16:9), ridge silhouette spanning the full width.

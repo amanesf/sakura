@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, summer panel: lush, vivid green under bright summer sunlight.
+
+Generate a seamless summer lakeside-meadow ground texture (thick green grass, not rice-paddy rows), viewed from a slightly elevated angle, matching the exact saturated green color palette and painterly brushwork of this reference's foliage: vivid, sunlit yellow-green to deep green grass with a few brighter sunlit highlights.
+
+Requirements:
+- No sky, no water, no tree trunk, no people, no crop rows — an even, all-over lush grass meadow surface texture.
+- No single strong directional shadow across the whole frame (this will be lit dynamically in a 3D scene) — keep the lighting soft and fairly even so it can tile.
+- Same painterly texture and vivid saturated color grading as the reference.
+- Square aspect ratio, texture filling the entire frame edge to edge.

@@ -1,0 +1,9 @@
+This reference image is a Japanese four-season illustration strip, winter panel: a snow-covered lakeside with soft, cool-toned snow.
+
+Generate a seamless snow-covered ground texture, viewed from a slightly elevated angle, matching the exact color palette and painterly brushwork of the snow ground in this reference: pale bluish-white snow with cool violet-blue undertones, subtle soft mottled texture and gentle undulations.
+
+Requirements:
+- No sky, no water, no tree, no people, no distinct isolated objects or footprints — an even, all-over snow-field surface texture.
+- No single strong directional shadow across the whole frame (this will be lit dynamically in a 3D scene) — keep the lighting soft and fairly even so it can tile.
+- Same painterly texture and cool color grading as the reference.
+- Square aspect ratio, texture filling the entire frame edge to edge.
