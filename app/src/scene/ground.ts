@@ -6,6 +6,10 @@ export interface GroundHandle {
   nearShoreMaterial: THREE.MeshStandardMaterial;
   farShore: THREE.Mesh;
   farShoreMaterial: THREE.MeshStandardMaterial;
+  /** Covers the whole near-shore↔mountains gap for non-winter seasons, hidden for
+   *  winter — see its doc comment below for why. */
+  lakeCover: THREE.Mesh;
+  lakeCoverMaterial: THREE.MeshStandardMaterial;
 }
 
 /**
@@ -80,6 +84,36 @@ function loadGroundTexture(season: SeasonId, cache: Map<SeasonId, THREE.Texture>
   return texture;
 }
 
+// The lake's own reference art (art-source/COMPOSITION-REFERENCE.md §5.2) is
+// winter-only — spring/summer/autumn panels show no open water at all between the
+// mountains and the near meadow, just more field stretching back (spring: a
+// distinct dense yellow nanohana band; summer/autumn: the same field continuing).
+// lakeCover (below) hides scene/lake.ts's Reflector for those three seasons rather
+// than leaving it as a jarring "mystery blue band" a Gemini composition review
+// flagged as the single biggest resemblance-breaking issue. Spring gets its own
+// generated band texture (art-source/midfield/); summer/autumn just reuse their
+// own ground photo, tiled further back, since the reference doesn't show anything
+// visually distinct there.
+const MIDFIELD_TEXTURE_FILES: Partial<Record<SeasonId, string>> = {
+  spring: 'spring.jpg',
+};
+const midfieldTextureCache = new Map<SeasonId, THREE.Texture>();
+
+function loadLakeCoverTexture(season: SeasonId): THREE.Texture {
+  const midfieldFile = MIDFIELD_TEXTURE_FILES[season];
+  if (!midfieldFile) return loadGroundTexture(season, farTextureCache);
+  const cached = midfieldTextureCache.get(season);
+  if (cached) return cached;
+  const url = `${import.meta.env.BASE_URL}textures/midfield/${midfieldFile}`;
+  const texture = groundTextureLoader.load(url);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 16;
+  midfieldTextureCache.set(season, texture);
+  return texture;
+}
+
 const NEAR_SHORE_WIDTH = 46;
 const NEAR_SHORE_DEPTH = 24;
 // Far edge (toward the lake) sits here; the plane extends *toward* the camera from
@@ -145,7 +179,23 @@ export function createGround(): GroundHandle {
   // shrinks the open-water gap between the two shores to match the reference art.
   farShore.position.set(0, 0.02, -13);
 
-  return { nearShore, nearShoreMaterial, farShore, farShoreMaterial };
+  // Sits just above farShore (y=0.025 > 0.02) so when visible it fully occludes
+  // both farShore and the lake beneath — see MIDFIELD_TEXTURE_FILES's doc comment
+  // above for why this exists at all. Hidden by default (winter); setGroundSeasonState
+  // shows it for spring/summer/autumn.
+  const lakeCoverTexture = loadLakeCoverTexture('winter');
+  lakeCoverTexture.repeat.set(6, 3);
+  const lakeCoverMaterial = new THREE.MeshStandardMaterial({
+    color: '#ffffff',
+    roughness: 1,
+    map: lakeCoverTexture,
+  });
+  const lakeCover = new THREE.Mesh(new THREE.PlaneGeometry(60, 28), lakeCoverMaterial);
+  lakeCover.rotation.x = -Math.PI / 2;
+  lakeCover.position.set(0, 0.025, -14);
+  lakeCover.visible = false;
+
+  return { nearShore, nearShoreMaterial, farShore, farShoreMaterial, lakeCover, lakeCoverMaterial };
 }
 
 /** Called by the season system (依頼A') whenever the dial settles on a new season —
@@ -160,4 +210,12 @@ export function setGroundSeasonState(ground: GroundHandle, seasonId: SeasonId): 
   farTexture.repeat.set(3, 1);
   ground.farShoreMaterial.map = farTexture;
   ground.farShoreMaterial.needsUpdate = true;
+
+  ground.lakeCover.visible = seasonId !== 'winter';
+  if (ground.lakeCover.visible) {
+    const lakeCoverTexture = loadLakeCoverTexture(seasonId);
+    lakeCoverTexture.repeat.set(6, 3);
+    ground.lakeCoverMaterial.map = lakeCoverTexture;
+    ground.lakeCoverMaterial.needsUpdate = true;
+  }
 }
