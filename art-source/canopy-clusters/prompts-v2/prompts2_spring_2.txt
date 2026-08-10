@@ -1,0 +1,9 @@
+This reference image shows a single cherry blossom tree in full bloom, painted in a soft painterly illustration style.
+
+Generate ONE small, isolated cluster of blooming sakura blossoms on a short twig — a delicate cluster of maybe 5-10 small individual flowers, some still closed buds, matching this reference tree's exact painterly brush style, soft lighting, and pastel pink color palette, slightly more white-toned blossoms near the top. This should look like a close crop taken directly from a small section of that tree's canopy, not a large dense bouquet — keep it airy and delicate, with visible gaps between individual blossoms and a few thin twigs poking out, not one solid rounded blob.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the cluster itself.
+- Delicate, airy silhouette — NOT a large chunky pom-pom shape.
+- Same brush/painterly texture and color grading as the reference (soft pastel pink, warm highlights, cool shadow).
+- Square aspect ratio, cluster centered with generous padding around it (the cluster should occupy roughly the middle 50% of the frame).

@@ -1,0 +1,9 @@
+This reference image shows a single tree with deep crimson-red autumn foliage in warm sunset light, painted in a soft photorealistic-painterly illustration style. Note the leaves are small and feathery/fine (like a smoke tree or similar fine-leaved species), NOT large maple-shaped leaves — pay close attention to the actual small leaf shape shown in this reference.
+
+Generate ONE small, isolated cluster of these same orange and gold autumn leaves on a short twig — a delicate spray of maybe 15-25 small fine leaves (matching the reference's actual small feathery leaf shape, not maple leaves), matching this reference tree's exact painterly brush style, warm sunset lighting, and rich warm orange-gold color palette. This should look like a close crop taken directly from a small section of that tree's canopy — keep it airy with visible small gaps and thin twigs showing through, not one solid rounded ball.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the cluster itself.
+- Delicate, airy silhouette — NOT a large chunky pom-pom/ball shape, and NOT maple-shaped leaves.
+- Same brush/painterly texture and color grading as the reference (warm orange and gold, sunset highlights, cool shadow).
+- Square aspect ratio, cluster centered with generous padding around it (the cluster should occupy roughly the middle 50% of the frame).

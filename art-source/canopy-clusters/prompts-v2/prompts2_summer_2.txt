@@ -1,0 +1,9 @@
+This reference image shows a single tree with lush green summer foliage under bright sunlight, painted in a soft painterly illustration style.
+
+Generate ONE small, isolated cluster of green summer leaves on a short twig — a delicate spray of maybe 12-22 small individual leaves, matching this reference tree's exact painterly brush style, the same fine dappled leaf texture, bright sunlit lighting, and saturated green color palette, slightly darker shaded leaves toward the center. This should look like a close crop taken directly from a small section of that tree's canopy — keep it airy with visible small gaps and thin twigs showing through, not one solid rounded ball of green.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the cluster itself.
+- Delicate, airy silhouette — NOT a large chunky pom-pom/ball shape.
+- Same brush/painterly texture and color grading as the reference (vivid saturated green, warm sunlit highlights, cool shadow, small dappled leaf shapes not big cartoon leaves).
+- Square aspect ratio, cluster centered with generous padding around it (the cluster should occupy roughly the middle 50% of the frame).

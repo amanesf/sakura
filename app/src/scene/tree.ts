@@ -288,12 +288,13 @@ function buildClusterPlacements(
   return placements;
 }
 
-// How much larger than a placement's nominal radius the plane needs to be: each
-// generated image has the cluster filling most of its square frame but not all
-// of it (padding was part of the generation prompt so soft edges don't get cut
-// off), so the plane has to be sized up from the "content radius" to show that
+// How much larger than a placement's nominal radius the plane needs to be. The
+// generated cluster images were prompted for a *delicate, airy* look — content
+// filling only the middle ~50% of the square frame, generous padding — rather
+// than a chunky pom-pom filling the whole frame, so the plane has to be sized up
+// correspondingly more (≈1/0.5×2 ≈ 4×) from the "content radius" to show that
 // padding without the content itself reading smaller than intended.
-const CLUSTER_PLANE_SCALE = 2.4;
+const CLUSTER_PLANE_SCALE = 4.0;
 
 function buildSeasonClusterSet(
   seasonKey: Exclude<CanopySeasonKey, 'winter'>,
