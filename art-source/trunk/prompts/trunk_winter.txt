@@ -1,0 +1,9 @@
+This reference image shows a single bare winter tree by a frozen lake, painted in a soft painterly illustration style.
+
+Reproduce ONLY the tree itself (trunk and bare branches, no leaves, no snow, no snowflakes, no lake, no mountains, no sky, no ground) as an isolated cutout, preserving the EXACT same silhouette, proportions, trunk lean angle, branch structure, and branching gesture as the reference tree — this must look like the same individual tree, not a generic bare tree.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the tree itself (no blue bark, no blue shadow).
+- Same brush/painterly texture, bark color and lighting/shading as the reference tree.
+- Keep the same overall composition: the trunk should start near the bottom of the frame and the branches should spread through the upper portion, matching the reference's proportions (trunk height vs. canopy spread).
+- Portrait orientation, tree filling most of the frame with a little padding on all sides.

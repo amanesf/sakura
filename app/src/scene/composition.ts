@@ -33,7 +33,7 @@ export interface Composition {
  * THREE.Scene so later subsystems (依頼A' season state, 依頼B time field, ...) only
  * need the handles returned here, never re-derive scene layout.
  */
-export function createComposition(): Composition {
+export async function createComposition(): Promise<Composition> {
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog('#cfe0dd', 25, 90);
 
@@ -49,7 +49,7 @@ export function createComposition(): Composition {
   const ground = createGround();
   scene.add(ground.nearShore, ground.farShore);
 
-  const tree = createTree();
+  const tree = await createTree();
   scene.add(tree.group);
 
   const vegetation = createVegetation();

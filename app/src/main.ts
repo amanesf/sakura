@@ -20,7 +20,7 @@ const appHost = document.querySelector<HTMLDivElement>('#app')!;
 
 const renderer = createRenderer(appHost);
 const camera = createCamera(window.innerWidth / window.innerHeight);
-const composition = createComposition();
+const composition = await createComposition();
 const postFx = createPostFx(renderer, composition.scene, camera);
 
 watchResize(renderer, camera);
