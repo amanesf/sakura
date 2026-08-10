@@ -274,7 +274,7 @@ function buildClusterPlacements(
   const pyMin = trunk.contentTopPy - marginPx;
   const pyMax = canopyStartPy;
 
-  const cellPx = 28;
+  const cellPx = 22;
   const cols = Math.max(1, Math.round((pxMax - pxMin) / cellPx));
   const rows = Math.max(1, Math.round((pyMax - pyMin) / cellPx));
   const cellW = (pxMax - pxMin) / cols;
@@ -307,8 +307,11 @@ function buildClusterPlacements(
 // (was 4.0) so neighboring clusters overlap enough to hide the bare branches
 // between them — the reference art's canopy reads as near-solid coverage, not
 // discrete separated puffs (season-transition-animation.md 参考画像比較, user
-// direction: "花や葉っぱはもっと多くする必要ある").
-const CLUSTER_PLANE_SCALE = 6.2;
+// direction: "花や葉っぱはもっと多くする必要ある"). Bumped again per a Gemini
+// composition review: branches were still visibly crossing over/in front of the
+// canopy mass, where the reference shows branches only near the trunk and in small
+// gaps — the reference's blossom mass covers the branch structure almost entirely.
+const CLUSTER_PLANE_SCALE = 7.6;
 
 function buildSeasonClusterSet(
   seasonKey: Exclude<CanopySeasonKey, 'winter'>,

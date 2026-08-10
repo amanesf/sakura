@@ -137,9 +137,12 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // just softened the fine texture). With ~60 discrete generated clusters
     // (tree.ts's cluster system) that same fraction leaves visible gaps showing
     // bare branch through the canopy — most clusters need to stay lit for a full
-    // bloom, with summer's 1.0 still reading fuller/denser by comparison.
-    canopyDensity: 0.93,
-    canopyScale: 0.92,
+    // bloom, with summer's 1.0 still reading fuller/denser by comparison. Bumped
+    // to near-1.0 and canopyScale enlarged (was 0.93/0.92) per a Gemini composition
+    // review: the reference canopy spreads well into the left half of frame and
+    // reads as a much larger, denser mass than ours did.
+    canopyDensity: 0.98,
+    canopyScale: 1.12,
     canopyColor: '#f1aec4',
     vegetationDensity: 0.92,
     vegetationHeight: 0.35,
@@ -168,7 +171,8 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     id: 'summer',
     label: '夏',
     canopyDensity: 1.0,
-    canopyScale: 1.05,
+    // Enlarged alongside spring's (was 1.05) — same canopy-spread finding.
+    canopyScale: 1.18,
     canopyColor: '#3f9a4a',
     // skyTop: pixel-sampled from summer_panel_crop.png (COMPOSITION-REFERENCE.md
     // §5.3); ground/vegetation/mountains are all photo textures now, see
@@ -200,9 +204,10 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     // "just turned" vs. "already bare" as separate dial notches.
     id: 'autumn',
     label: '秋',
-    // See spring's canopyDensity comment — same reasoning.
-    canopyDensity: 0.9,
-    canopyScale: 0.95,
+    // See spring's canopyDensity comment — same reasoning. Scale enlarged (was
+    // 0.95) alongside spring/summer's.
+    canopyDensity: 0.95,
+    canopyScale: 1.08,
     canopyColor: '#d0651f',
     vegetationDensity: 0.75,
     vegetationHeight: 0.8,
