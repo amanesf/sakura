@@ -56,7 +56,7 @@ export async function createComposition(): Promise<Composition> {
   scene.add(vegetation.mesh);
 
   const flowers = createFlowers();
-  scene.add(flowers.mesh);
+  scene.add(flowers.group);
 
   const shedding = createSheddingParticles();
   scene.add(shedding.mesh);

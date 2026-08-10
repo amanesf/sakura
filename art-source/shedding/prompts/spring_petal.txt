@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, spring panel: cherry blossoms with pale pink petals falling and scattered in the air.
+
+Generate ONE isolated single falling cherry blossom petal (a small five-lobed pale pink sakura petal, slightly curled/twisted as if falling), as if cropped directly from the falling petals in that spring panel. Match the exact painterly style and soft pastel-pink color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere on the petal itself.
+- One single petal, centered, soft natural edges, no other petals or flowers in frame.
+- Square aspect ratio, petal filling about half the frame with padding around it.

@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, spring panel: a meadow with small yellow flowers (rapeseed/dandelion), white flowers, and pink petals scattered on the grass.
+
+Generate ONE isolated single small wildflower, viewed from slightly above/the side as if seen scattered in a meadow — a bright yellow dandelion or rapeseed-style flower head, tiny green leaves at its base, as if cropped directly from the flowers in that spring panel. Match the exact painterly style and bright color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the flower itself.
+- One single small flower, centered, soft natural edges, no other flowers or grass blades in frame.
+- Square aspect ratio, flower filling about half the frame with padding around it.

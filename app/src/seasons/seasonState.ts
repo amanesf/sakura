@@ -30,10 +30,11 @@ export interface SeasonVisualParams {
   /** Scattered wildflower dots (scene/flowers.ts) — spring's "花畑" (§5), 0 elsewhere. */
   flowerDensity: number;
 
-  /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉.
-   *  0 outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
+  /** Falling petal/leaf particles (scene/sheddingParticles.ts), §8 桜吹雪・落葉 —
+   *  sensitivity only, the sprite's own color now comes from its Gemini-generated
+   *  texture (季節ごとのスプライト切り替えはSeasonIdで行う, not a color tint). 0
+   *  outside the two shedding scenes — see that module's LEAF_DETACH_THRESHOLD
    *  gearing for why this is a multiplier rather than a plain on/off flag. */
-  sheddingColor: THREE.Color;
   sheddingSensitivity: number;
 
   /** Lake (Reflector tint, multiplies the mirrored scene). */
@@ -67,7 +68,6 @@ export interface SeasonVisualParams {
 type SeasonKeyframeInput = Omit<
   SeasonVisualParams,
   | 'canopyColor'
-  | 'sheddingColor'
   | 'lakeTint'
   | 'skyTop'
   | 'skyHorizon'
@@ -78,7 +78,6 @@ type SeasonKeyframeInput = Omit<
   | 'hemiGround'
 > & {
   canopyColor: string;
-  sheddingColor: string;
   lakeTint: string;
   skyTop: string;
   skyHorizon: string;
@@ -106,7 +105,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationDensity: 0.6,
     vegetationHeight: 0.5,
     flowerDensity: 0,
-    sheddingColor: '#e8ecf0',
     sheddingSensitivity: 0,
     // lakeTint/skyTop/skyHorizon below are pixel-sampled from winter_panel_crop.png
     // (art-source/COMPOSITION-REFERENCE.md §4), replacing earlier decide-by-eye
@@ -146,7 +144,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationDensity: 0.92,
     vegetationHeight: 0.35,
     flowerDensity: 0.85,
-    sheddingColor: '#f5b3cd',
     sheddingSensitivity: 4.6,
     // skyTop: pixel-sampled from spring_panel_crop.png (COMPOSITION-REFERENCE.md
     // §5.3); ground/mountains are now photo textures, see scene/ground.ts and
@@ -179,7 +176,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
     flowerDensity: 0,
-    sheddingColor: '#ffffff',
     sheddingSensitivity: 0,
     lakeTint: '#2f7fa0',
     skyTop: '#67adf0',
@@ -211,7 +207,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     vegetationDensity: 0.75,
     vegetationHeight: 0.8,
     flowerDensity: 0,
-    sheddingColor: '#cf7a30',
     sheddingSensitivity: 4.6,
     // skyTop/skyHorizon: pixel-sampled from autumn_panel_crop.png
     // (COMPOSITION-REFERENCE.md §5.3). The reference's sky stays cool/purple at the
@@ -241,7 +236,6 @@ function toParams(input: SeasonKeyframeInput): SeasonVisualParams {
   return {
     ...input,
     canopyColor: new THREE.Color(input.canopyColor),
-    sheddingColor: new THREE.Color(input.sheddingColor),
     lakeTint: new THREE.Color(input.lakeTint),
     skyTop: new THREE.Color(input.skyTop),
     skyHorizon: new THREE.Color(input.skyHorizon),

@@ -37,8 +37,7 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
 
   setFlowerSeasonState(flowers, params.flowerDensity);
 
-  shedding.material.color.copy(params.sheddingColor);
-  setSheddingSeasonState(shedding, params.sheddingSensitivity);
+  setSheddingSeasonState(shedding, params.id, params.sheddingSensitivity);
 
   setGroundSeasonState(ground, params.id);
 
