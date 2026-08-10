@@ -23,8 +23,8 @@ export interface SeasonVisualParams {
   /** Uniform size multiplier applied on top of each instance's own baked variance. */
   canopyScale: number;
 
-  /** Foreground shore vegetation (scene/vegetation.ts). */
-  vegetationColor: THREE.Color;
+  /** Foreground shore vegetation (scene/vegetation.ts) — density/height only, the
+   *  tuft's own color now comes from its Gemini-generated texture, not a tint. */
   vegetationDensity: number;
   vegetationHeight: number;
   /** Scattered wildflower dots (scene/flowers.ts) — spring's "花畑" (§5), 0 elsewhere. */
@@ -67,7 +67,6 @@ export interface SeasonVisualParams {
 type SeasonKeyframeInput = Omit<
   SeasonVisualParams,
   | 'canopyColor'
-  | 'vegetationColor'
   | 'sheddingColor'
   | 'lakeTint'
   | 'skyTop'
@@ -79,7 +78,6 @@ type SeasonKeyframeInput = Omit<
   | 'hemiGround'
 > & {
   canopyColor: string;
-  vegetationColor: string;
   sheddingColor: string;
   lakeTint: string;
   skyTop: string;
@@ -105,7 +103,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 0,
     canopyScale: 0.55,
     canopyColor: '#8a8378',
-    vegetationColor: '#e5eef2',
     vegetationDensity: 0.6,
     vegetationHeight: 0.5,
     flowerDensity: 0,
@@ -146,7 +143,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 0.93,
     canopyScale: 0.92,
     canopyColor: '#f1aec4',
-    vegetationColor: '#d9b67c',
     vegetationDensity: 0.92,
     vegetationHeight: 0.35,
     flowerDensity: 0.85,
@@ -177,12 +173,9 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 1.0,
     canopyScale: 1.05,
     canopyColor: '#3f9a4a',
-    // vegetationColor: COMPOSITION-REFERENCE.md §5.3's "田んぼ・緑" swatch (ground
-    // itself is now a photo texture, see scene/ground.ts — the doc originally
-    // measured this one color against both). skyTop: pixel-sampled from
-    // summer_panel_crop.png likewise; mountains are now a photo texture too, see
-    // scene/mountains.ts.
-    vegetationColor: '#75a847',
+    // skyTop: pixel-sampled from summer_panel_crop.png (COMPOSITION-REFERENCE.md
+    // §5.3); ground/vegetation/mountains are all photo textures now, see
+    // scene/ground.ts, scene/vegetation.ts and scene/mountains.ts.
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
     flowerDensity: 0,
@@ -215,7 +208,6 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 0.9,
     canopyScale: 0.95,
     canopyColor: '#d0651f',
-    vegetationColor: '#bea87c',
     vegetationDensity: 0.75,
     vegetationHeight: 0.8,
     flowerDensity: 0,
@@ -249,7 +241,6 @@ function toParams(input: SeasonKeyframeInput): SeasonVisualParams {
   return {
     ...input,
     canopyColor: new THREE.Color(input.canopyColor),
-    vegetationColor: new THREE.Color(input.vegetationColor),
     sheddingColor: new THREE.Color(input.sheddingColor),
     lakeTint: new THREE.Color(input.lakeTint),
     skyTop: new THREE.Color(input.skyTop),

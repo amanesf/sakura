@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, winter panel: snow-dusted dry grass and frost near the lakeshore.
+
+Generate ONE isolated small tuft/clump of winter grass (a few dry, pale, frost-dusted blades of grass bending together, some with tiny snow/frost highlights), as if cropped directly from the ground cover in that winter panel. Match the exact painterly style and cool, pale color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the tuft itself.
+- One small tuft of a handful of grass blades, rooted at the bottom-center of the frame, fanning upward, soft natural edges.
+- Square aspect ratio, tuft centered near the bottom of the frame with the blades reaching up through the middle, generous padding at the top.

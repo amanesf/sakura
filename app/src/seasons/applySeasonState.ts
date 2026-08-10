@@ -33,8 +33,7 @@ export function applySeasonState(composition: Composition, params: SeasonVisualP
 
   setCanopySeasonState(tree, params.id, params.canopyDensity, params.canopyScale);
 
-  vegetation.material.color.copy(params.vegetationColor);
-  setVegetationSeasonState(vegetation, params.vegetationDensity, params.vegetationHeight);
+  setVegetationSeasonState(vegetation, params.id, params.vegetationDensity, params.vegetationHeight);
 
   setFlowerSeasonState(flowers, params.flowerDensity);
 

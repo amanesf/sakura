@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, spring panel: a meadow of green grass with small yellow flowers, dandelions and pink petals.
+
+Generate ONE isolated small tuft/clump of spring grass with one or two tiny yellow flowers or a dandelion mixed in, as if cropped directly from the meadow in that spring panel. Match the exact painterly style and bright pastel-green color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the tuft itself.
+- One small tuft of a handful of grass blades plus a flower or two, rooted at the bottom-center of the frame, fanning upward, soft natural edges.
+- Square aspect ratio, tuft centered near the bottom of the frame with the blades reaching up through the middle, generous padding at the top.

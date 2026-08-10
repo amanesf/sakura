@@ -1,0 +1,8 @@
+This reference image is a Japanese four-season illustration strip, autumn panel: a warm golden sunset over a pampas grass (susuki) field.
+
+Generate ONE isolated small tuft/clump of golden-brown autumn grass (a few dry, warm-toned blades bending together, backlit by warm light), as if cropped directly from the pampas grass field in that autumn panel. Match the exact painterly style and warm amber color palette of the reference.
+
+Requirements:
+- Background: solid flat pure blue (#0000FF), completely uniform, no gradient, no shadow cast on it, for chroma-key extraction. The blue must not appear anywhere in the tuft itself.
+- One small tuft of a handful of grass blades, rooted at the bottom-center of the frame, fanning upward, soft natural edges.
+- Square aspect ratio, tuft centered near the bottom of the frame with the blades reaching up through the middle, generous padding at the top.
