@@ -129,12 +129,18 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     flowerDensity: 0,
     sheddingColor: '#e8ecf0',
     sheddingSensitivity: 0,
-    lakeTint: '#9fb9c9',
-    skyTop: '#9fc3e8',
-    skyHorizon: '#e8f1f7',
+    // lakeTint/skyTop/skyHorizon/mountainFar below are pixel-sampled from
+    // winter_panel_crop.png (art-source/COMPOSITION-REFERENCE.md §4), replacing
+    // earlier decide-by-eye values per agent-workflow-policy.md §1.5. groundColor/
+    // mountainNear aren't touched here: §4 flags the ground reading as unverified
+    // ("要確認") and only gives one combined mountain measurement with no
+    // near/far split, so mountainNear stays as the prior first-pass value.
+    lakeTint: '#7295b2',
+    skyTop: '#7fa8da',
+    skyHorizon: '#d3daea',
     skyBottom: '#c7d6da',
     mountainNear: '#8b9aa0',
-    mountainFar: '#c3d0d6',
+    mountainFar: '#ced6e9',
     fogColor: '#c9d8de',
     fogNear: 20,
     fogFar: 75,
@@ -161,20 +167,25 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 0.93,
     canopyScale: 0.92,
     canopyColor: '#f1aec4',
-    groundColor: '#a6b17a',
-    farShoreColor: '#82aa5f',
+    groundColor: '#a4af42',
+    farShoreColor: '#757f49',
     vegetationColor: '#d9b67c',
     vegetationDensity: 0.92,
     vegetationHeight: 0.35,
     flowerDensity: 0.85,
     sheddingColor: '#f5b3cd',
     sheddingSensitivity: 4.6,
+    // skyTop/mountainNear/mountainFar/groundColor/farShoreColor: pixel-sampled from
+    // spring_panel_crop.png (COMPOSITION-REFERENCE.md §5.3). skyHorizon left as-is
+    // (doc: "ほぼ一致"). The reference only gives one hazy "山" swatch covering both
+    // ridgelines (no near/far split visible at that distance), so both mountain
+    // fields take the same measured value.
     lakeTint: '#bfd7df',
-    skyTop: '#77b8ee',
+    skyTop: '#91cbfc',
     skyHorizon: '#e0eaef',
     skyBottom: '#d9e8d1',
-    mountainNear: '#7e9a7d',
-    mountainFar: '#a4bcbb',
+    mountainNear: '#b9b8bd',
+    mountainFar: '#b9b8bd',
     fogColor: '#eef1ea',
     fogNear: 27,
     fogFar: 98,
@@ -193,20 +204,23 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     canopyDensity: 1.0,
     canopyScale: 1.05,
     canopyColor: '#3f9a4a',
-    groundColor: '#4f9b3d',
+    // groundColor/vegetationColor: COMPOSITION-REFERENCE.md §5.3 measures one
+    // "田んぼ・緑" swatch against both fields together, so both take it. skyTop/
+    // mountainNear/mountainFar: pixel-sampled from summer_panel_crop.png likewise.
+    groundColor: '#75a847',
     farShoreColor: '#3f8a38',
-    vegetationColor: '#3f8a35',
+    vegetationColor: '#75a847',
     vegetationDensity: 1.0,
     vegetationHeight: 0.9,
     flowerDensity: 0,
     sheddingColor: '#ffffff',
     sheddingSensitivity: 0,
     lakeTint: '#2f7fa0',
-    skyTop: '#3f8fe0',
+    skyTop: '#67adf0',
     skyHorizon: '#bfe3f7',
     skyBottom: '#dff2e0',
-    mountainNear: '#4d7a52',
-    mountainFar: '#7fa39a',
+    mountainNear: '#548f8d',
+    mountainFar: '#c8e5ef',
     fogColor: '#cfe9e0',
     fogNear: 30,
     fogFar: 95,
@@ -238,12 +252,19 @@ const SEASON_KEYFRAME_INPUT: Record<SeasonId, SeasonKeyframeInput> = {
     flowerDensity: 0,
     sheddingColor: '#cf7a30',
     sheddingSensitivity: 4.6,
+    // skyTop/skyHorizon/mountainNear/mountainFar: pixel-sampled from
+    // autumn_panel_crop.png (COMPOSITION-REFERENCE.md §5.3). The reference's sky
+    // stays cool/purple at the very top even at sunset — only the horizon glows
+    // warm — so skyTop moves toward blue-violet while skyHorizon gets more
+    // saturated orange, not the uniform warm wash the prior values had. Both
+    // mountain fields take the single "逆光で金色に発光" swatch (no near/far
+    // split measured).
     lakeTint: '#c08059',
-    skyTop: '#e08f56',
-    skyHorizon: '#f7d2a0',
+    skyTop: '#afb1c5',
+    skyHorizon: '#dc9c65',
     skyBottom: '#e9bc84',
-    mountainNear: '#836654',
-    mountainFar: '#bb9c81',
+    mountainNear: '#ebba7f',
+    mountainFar: '#ebba7f',
     fogColor: '#ecc9a2',
     fogNear: 21,
     fogFar: 75,
