@@ -305,17 +305,28 @@ function buildSeasonClusterSet(
 ): SeasonClusterSet {
   const urls = CANOPY_CLUSTER_URLS[seasonKey];
   const textures = urls.map((f) => loadClusterTexture(f));
+  // One material per distinct cluster texture (3 per season), reused across every
+  // placement that happens to pick it — previously a fresh MeshBasicMaterial was
+  // allocated per placement (dozens to hundreds of near-duplicate materials all
+  // pointing at the same 3 textures), which multiplies WebGL program/state churn
+  // for no visual benefit. This is exactly the kind of extra GPU-side load the
+  // real-device crash fixes elsewhere in this file (see loadTrunkAsset's doc
+  // comment history) have had to claw back, so it's not worth carrying here.
+  const materials = textures.map(
+    (map) =>
+      new THREE.MeshBasicMaterial({
+        map,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.FrontSide,
+      }),
+  );
   const geometry = new THREE.PlaneGeometry(1, 1);
   const group = new THREE.Group();
   const clusters: CanopyCluster[] = [];
 
   for (const placement of placements) {
-    const material = new THREE.MeshBasicMaterial({
-      map: textures[Math.floor(rng() * textures.length)],
-      transparent: true,
-      depthWrite: false,
-      side: THREE.FrontSide,
-    });
+    const material = materials[Math.floor(rng() * materials.length)];
     const mesh = new THREE.Mesh(geometry, material);
     const side = placement.radius * CLUSTER_PLANE_SCALE;
     mesh.scale.set(side * (rng() < 0.5 ? -1 : 1), side, 1);
