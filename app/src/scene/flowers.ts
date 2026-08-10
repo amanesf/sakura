@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32, rngRange } from '../core/prng';
 import { CAMERA_POSITION, CAMERA_LOOK_AT } from '../core/camera';
+import { NEAR_SHORE_FAR_EDGE_Z } from './ground';
 
 export interface FlowerInstanceBase {
   x: number;
@@ -24,12 +25,15 @@ export interface FlowerHandle {
   seasonState: FlowerSeasonState;
 }
 
-// See vegetation.ts's identical-purpose constants for why these grew (was
-// 420/3.2/0.55) — matching the enlarged ground plane's visible extent and letting
-// flowers grow close to the trunk instead of leaving a bare ring around it.
+// See vegetation.ts's identical-purpose constants for why these grew, why the
+// patch is elliptical, and why it's pulled forward off NEAR_SHORE_FAR_EDGE_Z (was
+// 420/PATCH_RADIUS=3.2/0.55) — a wide-enough circle put flowers floating past the
+// ground's edge over open water.
 const INSTANCE_COUNT = 1300;
-const PATCH_CENTER = new THREE.Vector2(0, -1.4);
-const PATCH_RADIUS = 6.0;
+const PATCH_RADIUS_Z = 2.6;
+const GROUND_SAFETY_MARGIN = 1.0;
+const PATCH_CENTER = new THREE.Vector2(0, NEAR_SHORE_FAR_EDGE_Z + GROUND_SAFETY_MARGIN + PATCH_RADIUS_Z);
+const PATCH_RADIUS_X = 9.2;
 const TRUNK_EXCLUSION_RADIUS = 0.2;
 const FLOWER_HEIGHT = 0.22;
 
@@ -78,9 +82,9 @@ export function createFlowers(seed = 512): FlowerHandle {
   while (built < INSTANCE_COUNT && attempts < INSTANCE_COUNT * 20) {
     attempts++;
     const angle = rngRange(rng, 0, Math.PI * 2);
-    const r = Math.sqrt(rng()) * PATCH_RADIUS;
-    const x = PATCH_CENTER.x + Math.cos(angle) * r;
-    const z = PATCH_CENTER.y + Math.sin(angle) * r;
+    const r = Math.sqrt(rng());
+    const x = PATCH_CENTER.x + Math.cos(angle) * r * PATCH_RADIUS_X;
+    const z = PATCH_CENTER.y + Math.sin(angle) * r * PATCH_RADIUS_Z;
     if (Math.hypot(x, z) < TRUNK_EXCLUSION_RADIUS) continue;
 
     instances.push({

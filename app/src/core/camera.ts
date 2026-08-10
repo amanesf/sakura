@@ -14,7 +14,7 @@ export const CAMERA_POSITION = new THREE.Vector3(0, 5.2, 15.5);
 // doc's §2 for the target percentages); this is a pure yaw pan (camera position
 // unchanged) so it reframes the whole scene without introducing parallax between
 // the tree and the lake/mountains behind it.
-export const CAMERA_LOOK_AT = new THREE.Vector3(-1.86, 3.4, -4);
+export const CAMERA_LOOK_AT = new THREE.Vector3(-2.01, 3.4, -4);
 const CAMERA_FOV_DEG = 31.2;
 
 export function createCamera(aspect: number): THREE.PerspectiveCamera {

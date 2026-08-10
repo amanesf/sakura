@@ -62,8 +62,8 @@ export function createMountains(): MountainsHandle {
   // doesn't sit centered in view; solved the same way as width/bottomY, by
   // projecting each plane's edges through the actual camera and checking coverage.
   const configs = [
-    { z: -30, width: 16.8, bottomY: -1.6, x: -3.2 },
-    { z: -48, width: 20.4, bottomY: -3.3, x: -4.2 },
+    { z: -30, width: 16.8, bottomY: -1.6, x: -3.35 },
+    { z: -48, width: 20.4, bottomY: -3.3, x: -4.6 },
   ];
 
   const initialTexture = loadMountainTexture('winter');

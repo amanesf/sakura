@@ -27,10 +27,16 @@ function createEdgeFadeTexture(): THREE.Texture {
   // v=0 (PlaneGeometry's local -Y, the far/lake-facing edge after this mesh's
   // rotation — see createGround) fades out; v=1 (near, camera-facing edge) and
   // everywhere else stays fully opaque.
+  // Kept narrow (was 0→0.55→0.8, i.e. most of the plane's depth) — a wide fade
+  // left most of the *visible* ground semi-transparent, letting the lake
+  // reflection bleed through under grass/flowers there and read as a bizarre
+  // floating double-exposure (visual bug found via the elliptical-patch fix below
+  // + a real screenshot, not just the Gemini review). Only the far few world units
+  // need to blend into the lake at all.
   const gradient = ctx.createLinearGradient(0, 0, 0, size);
   gradient.addColorStop(0, 'rgba(255,255,255,0)');
-  gradient.addColorStop(0.35, 'rgba(255,255,255,0.9)');
-  gradient.addColorStop(0.55, 'rgba(255,255,255,1)');
+  gradient.addColorStop(0.1, 'rgba(255,255,255,0.85)');
+  gradient.addColorStop(0.18, 'rgba(255,255,255,1)');
   gradient.addColorStop(1, 'rgba(255,255,255,1)');
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, size, size);
@@ -78,7 +84,13 @@ const NEAR_SHORE_WIDTH = 46;
 const NEAR_SHORE_DEPTH = 24;
 // Far edge (toward the lake) sits here; the plane extends *toward* the camera from
 // this line, well past the bottom of frame — see createGround's sizing comment.
-const NEAR_SHORE_FAR_EDGE_Z = -6.2;
+// Pulled in from -6.2 (Gemini composition review, art-source/STATUS.md: reference
+// art — especially non-winter panels, which don't show open water at all — has
+// far less exposed lake between the shore and the far bank than a -6.2 edge left).
+// Exported: vegetation.ts/flowers.ts clamp their placement patch to stay within
+// this line — past it there's no ground mesh at all (open lake), so anything
+// placed there floats directly over the Reflector with no ground beneath it.
+export const NEAR_SHORE_FAR_EDGE_Z = -3.6;
 // World-unit size of one texture tile. The generated ground photos aren't seamless
 // (no tiling-aware generation step), so every repeat is a visible seam — this
 // stays large (few, big tiles) rather than matching the old ~4.4-unit circle's
@@ -129,7 +141,9 @@ export function createGround(): GroundHandle {
   });
   const farShore = new THREE.Mesh(farShoreGeometry, farShoreMaterial);
   farShore.rotation.x = -Math.PI / 2;
-  farShore.position.set(0, 0.02, -19);
+  // Pulled closer (was z=-19) for the same reason as NEAR_SHORE_FAR_EDGE_Z above —
+  // shrinks the open-water gap between the two shores to match the reference art.
+  farShore.position.set(0, 0.02, -13);
 
   return { nearShore, nearShoreMaterial, farShore, farShoreMaterial };
 }

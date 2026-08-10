@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mulberry32, rngRange } from '../core/prng';
 import { CAMERA_POSITION, CAMERA_LOOK_AT } from '../core/camera';
+import { NEAR_SHORE_FAR_EDGE_Z } from './ground';
 import type { SeasonId } from '../seasons/seasonState';
 
 export interface VegetationInstanceBase {
@@ -25,15 +26,23 @@ export interface VegetationHandle {
   seasonState: VegetationSeasonState;
 }
 
-// Radius/count both bumped (was 3.3/260) so the tuft patch actually reaches the
-// now much-larger ground plane's visible extent (see ground.ts) instead of leaving
-// bare photo-texture showing past a small inner circle, and so density holds up
-// over the larger area. TRUNK_EXCLUSION_RADIUS shrunk hard (was 0.55) — grass is
-// meant to grow right up against the trunk and hide its base/ground seam, not
-// leave a bare ring around it (user direction: "木の根元は草とかで隠すこと").
+// Count bumped (was 260) so density holds up over the larger elliptical patch
+// below. TRUNK_EXCLUSION_RADIUS shrunk hard (was 0.55) — grass is meant to grow
+// right up against the trunk and hide its base/ground seam, not leave a bare ring
+// around it (user direction: "木の根元は草とかで隠すこと").
 const INSTANCE_COUNT = 950;
-const PATCH_CENTER = new THREE.Vector2(0, -1.4);
-const PATCH_RADIUS = 6.2;
+// Elliptical, not circular (was a single PATCH_RADIUS=6.2) — wide in X to reach
+// across ground.ts's now much wider plane, but shallow in Z and pulled forward
+// (center.y > 0, toward the camera) so the patch's far edge never crosses
+// NEAR_SHORE_FAR_EDGE_Z into the lake — past that line there's no ground mesh at
+// all, so anything placed there floats directly over the Reflector with no ground
+// beneath it (an actual visible bug found by screenshot, not just a Gemini
+// composition-review guess: a wide-enough circle put tufts hovering over open
+// water, doubled by the lake's own reflection into a bizarre floating band).
+const PATCH_RADIUS_Z = 2.8;
+const GROUND_SAFETY_MARGIN = 1.0;
+const PATCH_CENTER = new THREE.Vector2(0, NEAR_SHORE_FAR_EDGE_Z + GROUND_SAFETY_MARGIN + PATCH_RADIUS_Z);
+const PATCH_RADIUS_X = 9.5;
 const TRUNK_EXCLUSION_RADIUS = 0.12;
 
 // One Gemini-generated grass/flower tuft per season (art-source/vegetation/,
@@ -98,9 +107,9 @@ export function createVegetation(seed = 71): VegetationHandle {
   while (built < INSTANCE_COUNT && attempts < INSTANCE_COUNT * 20) {
     attempts++;
     const angle = rngRange(rng, 0, Math.PI * 2);
-    const r = Math.sqrt(rng()) * PATCH_RADIUS;
-    const x = PATCH_CENTER.x + Math.cos(angle) * r;
-    const z = PATCH_CENTER.y + Math.sin(angle) * r;
+    const r = Math.sqrt(rng());
+    const x = PATCH_CENTER.x + Math.cos(angle) * r * PATCH_RADIUS_X;
+    const z = PATCH_CENTER.y + Math.sin(angle) * r * PATCH_RADIUS_Z;
     if (Math.hypot(x, z) < TRUNK_EXCLUSION_RADIUS) continue;
 
     instances.push({
