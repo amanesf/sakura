@@ -35,6 +35,9 @@ export interface TreeHandle {
    *  cherry trunks barely move in wind (only the crown does), so unlike the
    *  canopy this has no sway pivot of its own. */
   trunkMesh: THREE.Mesh;
+  /** The two textures trunkMesh.material.map swaps between on season change (see
+   *  setCanopySeasonState) — bare for spring/summer/autumn, frosted for winter. */
+  trunkTextures: { bare: THREE.Texture; frost: THREE.Texture };
   /** Whole-canopy sway pivot, positioned at the crown's own start height on the
    *  trunk — shared by every season's cluster set so switching seasons doesn't
    *  reset the correlated sway. */
@@ -77,6 +80,13 @@ export interface TreeHandle {
 
 const PIXELS_PER_WORLD_UNIT = 140;
 const TRUNK_URL = `${import.meta.env.BASE_URL}textures/trunk/winter.png`;
+// Winter-only frost/snow-coated re-skin of the exact same tree (art-source/trunk/
+// prompts/trunk_winter_frost.txt: an image-to-image edit of TRUNK_URL itself, not a
+// fresh generation — same silhouette/branch structure, just with snow added) shown
+// only when the season dial is on winter (see setCanopySeasonState). The base
+// TRUNK_URL image is reused bare for spring/summer/autumn, where its own canopy
+// cluster cover would make frost invisible anyway.
+const TRUNK_FROST_URL = `${import.meta.env.BASE_URL}textures/trunk/winter_frost.png`;
 
 interface TrunkAsset {
   canvas: HTMLCanvasElement;
@@ -372,8 +382,15 @@ export async function createTree(seed = 20260809): Promise<TreeHandle> {
   const rng = mulberry32(seed);
   const trunk = await loadTrunkAsset(TRUNK_URL);
 
+  const frostTexture = textureLoader.load(TRUNK_FROST_URL);
+  frostTexture.colorSpace = THREE.SRGBColorSpace;
+  frostTexture.wrapS = THREE.ClampToEdgeWrapping;
+  frostTexture.wrapT = THREE.ClampToEdgeWrapping;
+
   const trunkMaterial = new THREE.MeshBasicMaterial({
-    map: trunk.texture,
+    // Defaults to frost since the tree starts on winter (seasonState below) — see
+    // setCanopySeasonState for the swap on later season changes.
+    map: frostTexture,
     transparent: true,
     depthWrite: false,
     side: THREE.FrontSide,
@@ -441,6 +458,7 @@ export async function createTree(seed = 20260809): Promise<TreeHandle> {
   return {
     group,
     trunkMesh,
+    trunkTextures: { bare: trunk.texture, frost: frostTexture },
     canopyPivot,
     seasonClusters,
     seasonState,
@@ -461,6 +479,14 @@ export function setCanopySeasonState(
   tree.seasonState.density = density;
   tree.seasonState.scale = scale;
   tree.canopyPivot.scale.setScalar(scale);
+
+  const trunkMaterial = tree.trunkMesh.material as THREE.MeshBasicMaterial;
+  const wantFrost = seasonKey === 'winter';
+  const wantedTexture = wantFrost ? tree.trunkTextures.frost : tree.trunkTextures.bare;
+  if (trunkMaterial.map !== wantedTexture) {
+    trunkMaterial.map = wantedTexture;
+    trunkMaterial.needsUpdate = true;
+  }
 
   for (const [key, season] of Object.entries(tree.seasonClusters)) {
     const isActive = key === seasonKey;

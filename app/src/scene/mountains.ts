@@ -75,7 +75,10 @@ export function createMountains(): MountainsHandle {
       map: initialTexture,
       transparent: true,
       depthWrite: false,
-      fog: true,
+      // The generated art already bakes in its own atmospheric haze (see the
+      // prompts in art-source/mountains/prompts/) — scene fog on top of that
+      // doubled up and washed the ridge out to near-nothing at this distance.
+      fog: false,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(cfg.x, cfg.bottomY + height / 2, cfg.z);
