@@ -155,6 +155,97 @@ const FRAGMENT_SHADER = /* glsl */ `
     return vec2(dy, -dx);
   }
 
+  // Polynomial smooth-min (Inigo Quilez's standard form) — the core operator for
+  // fusing multiple sphere SDFs into one "collection of spheres" shape instead of
+  // one blob-with-noise. k controls how much the spheres bulge into each other at
+  // their seams versus reading as separate balls stuck together.
+  float smin(float a, float b, float k) {
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return mix(b, a, h) - k * h * (1.0 - h);
+  }
+
+  float sdSphere(vec3 p, vec3 center, float radius) {
+    return length(p - center) - radius;
+  }
+
+  // Research finding (アニメ雲の描き方): "積乱雲は球体の集まりとしてとらえることが
+  // でき、それぞれの球体の光が集まる一番明るくなるところと、暗く影になるところの
+  // 組み合わせでもくもくとした形を作る" — a cumulonimbus reads as a *cluster of
+  // spheres*, each with its own highlight/shadow, not one smoothly-varying blob.
+  // This builds that cluster as an SDF: a few big lobes (the "2-3 connected
+  // mountains" the research describes) fused with several smaller bumps riding on
+  // them, via smin. Because it's a real union of sphere distance fields,
+  // cloudNormal()'s gradient naturally curves around *each lobe's own center*
+  // near that lobe — which is exactly what makes per-lobe shading fall out for
+  // free, the same way it does for raymarched metaballs.
+  float sphereClusterSDF(vec3 p, vec2 centerXZ, float baseAlt, float topAlt, float radius, float seed) {
+    float heightSpan = max(topAlt - baseAlt, 0.001);
+    float d = 1.0e5;
+
+    // Independently-random offsets per sphere risked scattering big spheres far
+    // enough apart to look like separate floating blobs (or, worse, a ring/arch
+    // where a viewer's line of sight grazes between two disjoint lobes) instead
+    // of one connected mass — exactly the "doesn't read as a cumulonimbus" bug.
+    // Chaining each big sphere's XZ offset from the *previous* one, by a step
+    // small relative to their radii, guarantees consecutive (height-ordered)
+    // spheres always overlap enough to fuse solidly, like a stacked string of
+    // pearls rather than independently-thrown dice.
+    const int BIG_COUNT = 4;
+    vec3 bigCenters[BIG_COUNT];
+    float bigRadii[BIG_COUNT];
+    vec2 chainOffset = vec2(0.0);
+    for (int i = 0; i < BIG_COUNT; i++) {
+      float fi = float(i);
+      vec3 hs = vec3(
+        hash13(vec3(seed, fi, 1.0)),
+        hash13(vec3(seed, fi, 2.0)),
+        hash13(vec3(seed, fi, 3.0))
+      );
+      float heightFrac = clamp((fi + 0.5) / float(BIG_COUNT) + (hs.z - 0.5) * 0.2, 0.05, 0.95);
+      chainOffset += (hs.xy - 0.5) * radius * 0.3;
+      vec3 sphereCenter = vec3(
+        centerXZ.x + chainOffset.x,
+        baseAlt + heightFrac * heightSpan,
+        centerXZ.y + chainOffset.y
+      );
+      // Narrower toward the top — a tower's upper lobes are smaller than its base.
+      float sphereRadius = radius * mix(0.9, 0.55, heightFrac) * mix(0.85, 1.15, hs.z);
+      bigCenters[i] = sphereCenter;
+      bigRadii[i] = sphereRadius;
+      d = smin(d, sdSphere(p, sphereCenter, sphereRadius), radius * 0.4);
+    }
+
+    // Medium bumps are anchored to a *parent* big sphere's surface (picked by
+    // hash) rather than placed independently within the whole cluster radius —
+    // same reasoning: an independent placement could easily land far enough from
+    // every big sphere to read as a disconnected fleck. Anchoring guarantees
+    // every bump overlaps its parent lobe.
+    const int MED_COUNT = 6;
+    for (int i = 0; i < MED_COUNT; i++) {
+      float fi = float(i);
+      vec3 hs = vec3(
+        hash13(vec3(seed, fi, 11.0)),
+        hash13(vec3(seed, fi, 12.0)),
+        hash13(vec3(seed, fi, 13.0))
+      );
+      int parentIdx = int(hs.z * float(BIG_COUNT) - 0.001);
+      parentIdx = clamp(parentIdx, 0, BIG_COUNT - 1);
+      vec3 parentCenter = bigCenters[parentIdx];
+      float parentRadius = bigRadii[parentIdx];
+      float upBias = hash13(vec3(seed, fi, 15.0)) - 0.35;
+      vec3 dir = normalize(vec3(hs.x - 0.5, upBias, hs.y - 0.5) + 1e-4);
+      vec3 sphereCenter = parentCenter + dir * parentRadius * 0.75;
+      float sphereRadius = parentRadius * mix(0.35, 0.55, hash13(vec3(seed, fi, 14.0)));
+      d = smin(d, sdSphere(p, sphereCenter, sphereRadius), radius * 0.25);
+    }
+
+    return d;
+  }
+
+  float sdfToDensity(float d, float thickness) {
+    return 1.0 - smoothstep(0.0, thickness, d);
+  }
+
   vec2 raySphere(vec3 ro, vec3 rd, vec3 center, float radius) {
     vec3 oc = ro - center;
     float b = dot(oc, rd);
@@ -264,7 +355,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   // comes from there being hundreds of cells across the visible sky, not from
   // per-frame randomness. Addresses "雲は入道雲だけじゃないしさ" — most cells are
   // small/medium cumulus, only ~10% of occupied cells grow into a tower.
-  float scatteredCumulusField(vec2 warped, float altitude, float time, float lobeNoise, float fineNoise) {
+  float scatteredCumulusField(vec2 warped, float altitude, float time) {
     vec2 baseCell = floor(warped / CELL_SIZE_KM);
     float total = 0.0;
     for (int oy = -1; oy <= 1; oy++) {
@@ -289,33 +380,15 @@ const FRAGMENT_SHADER = /* glsl */ `
         float breathe = 0.9 + 0.1 * sin(time * 0.12 + seed * 25.0);
         top *= mix(breathe, 1.0, isTower);
 
-        float distToCenter = length(warped - center);
-        float heightFrac = clamp((altitude - base) / max(top - base, 0.001), 0.0, 1.0);
-        // A single smooth bump (no flat plateau) — two independent smoothsteps
-        // with overlapping ranges hold the *same* max radius across a wide middle
-        // band, which reads as a flat-sided disc/mushroom stack once many cells
-        // line up, not a rounded puff. heightJitter also shifts *where* that bump
-        // sits per angle/position, so the widest point isn't a perfectly level
-        // ring around every cloud (see the hero tower's identical fix above).
-        float heightJitter = (fbm2D((warped - center) * 0.7) - 0.5) * 0.5;
-        float jitteredHeightFrac = clamp(heightFrac + heightJitter, 0.0, 1.0);
-        float bump = clamp(1.0 - pow(abs(jitteredHeightFrac * 2.0 - 0.85), 1.6), 0.0, 1.0);
-        float radiusProfile = mix(0.4, 1.0, bump);
-        float radiusAtHeight = radius * radiusProfile;
+        // Cluster-of-spheres shape (see sphereClusterSDF's header) instead of a
+        // single radius(height) profile — this is what actually gives each cloud
+        // its own several distinct lit/shadowed lobes rather than one bumpy disc.
+        vec3 comovingP = vec3(warped.x, altitude, warped.y);
+        float clusterSeed = seed * 91.7 + cellId.x * 13.1 + cellId.y * 7.7;
+        float sdf = sphereClusterSDF(comovingP, center, base, top, radius, clusterSeed);
+        float density = sdfToDensity(sdf, radius * 0.18);
 
-        // Revolving any smooth radius(height) profile around a vertical axis is,
-        // by construction, a lens/saucer — real clouds break that symmetry with
-        // lumpy, angle-dependent noise. The previous ±25%-of-radius perturbation
-        // with a narrow falloff band was too weak/crisp to read as anything but a
-        // slightly bumpy disc; both the noise amplitude and the falloff width need
-        // to be a large fraction of the radius itself to actually hide the
-        // rotational symmetry.
-        float d = distToCenter - (lobeNoise * 0.95 + fineNoise * 0.45) * radiusAtHeight;
-        float radial = 1.0 - smoothstep(radiusAtHeight * 0.25, radiusAtHeight * 1.15, max(d, 0.0));
-        float topFall = 1.0 - smoothstep(top - 0.55, top + 0.1 + fineNoise * 0.5, altitude);
-        float baseFall = smoothstep(base - 0.1, base + 0.05, altitude);
-
-        total = max(total, radial * topFall * baseFall);
+        total = max(total, density);
       }
     }
     return total;
@@ -342,53 +415,19 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec2 flow = curl2D(p.xz * 0.10 + time * 0.025) * 0.35;
     vec2 warped = p.xz + windDrift + flow;
 
-    vec2 detailFlow = curl2D(p.xz * 0.32 + time * 0.06) * 0.55;
-    vec3 detailPos = vec3(warped + detailFlow, altitude - time * 0.05);
-    float fieldLobeNoise = fbm3D(detailPos * 0.45, 4) - 0.5;
-    float fieldFineNoise = fbm3D(detailPos * 1.7, 5) - 0.5;
-    float backgroundDensity = scatteredCumulusField(warped, altitude, time, fieldLobeNoise, fieldFineNoise);
+    float backgroundDensity = scatteredCumulusField(warped, altitude, time);
 
     // Hero tower: fixed horizontal position (composition-matched), growth animated.
     float towerPhase = fract((time + TOWER_SEED * 37.0) / TOWER_CYCLE_SECONDS);
     float growth = towerGrowth(towerPhase);
     float towerTop = CLOUD_BASE_KM + growth * (TOWER_TOP_MAX_KM - CLOUD_BASE_KM);
 
-    vec2 toCenter = warped - TOWER_CENTER_KM.xz;
-    float heightFrac = clamp((altitude - CLOUD_BASE_KM) / max(towerTop - CLOUD_BASE_KM, 0.001), 0.0, 1.0);
-    // Cumulonimbus silhouette bulges in the upper-middle and tapers at both the
-    // (flat) base and the top — a single smooth bump, not two independently-timed
-    // smoothsteps, which would hold the same max radius across a wide band and
-    // read as a flat-sided drum/disc instead of a rounded, continuously-swelling
-    // thunderhead. Critically, the *height* of that bulge's equator is also
-    // jittered by angle/position (heightJitter) — otherwise, even with a heavily
-    // noise-perturbed radius, the widest point sits at exactly the same altitude
-    // all the way around the tower, which reads as a perfectly level ring (a
-    // flying-saucer silhouette) no matter how ragged its edge is.
-    float heightJitter = (fbm2D(toCenter * 0.55) - 0.5) * 0.45;
-    float jitteredHeightFrac = clamp(heightFrac + heightJitter, 0.0, 1.0);
-    float towerBump = clamp(1.0 - pow(abs(jitteredHeightFrac * 2.0 - 0.75), 1.3), 0.0, 1.0);
-    float radiusProfile = mix(0.55, 1.15, towerBump);
-    float baseRadiusAtHeight = TOWER_RADIUS_KM * radiusProfile;
-
-    // Vertical noise scroll biased upward, scaled by how actively the tower is
-    // rising — sells the "welling up" motion on the boiling edges while growing.
-    float boilSpeed = 0.4 * smoothstep(0.0, 0.35, growth) * (1.0 - smoothstep(0.7, 1.0, towerPhase));
-    vec3 boilPos = vec3(warped, altitude - time * boilSpeed);
-
-    // Cauliflower silhouette: perturb the *radius itself* (angle-dependent, via
-    // large lumpy lobes + fine bumps) rather than only softening a fixed edge —
-    // a plain radial smoothstep reads as a smooth spire/vase, not a billowing
-    // cumulonimbus. Two noise octaves at very different frequencies give large
-    // lobes (individual "cauliflower heads") with smaller bumps riding on them.
-    float lobeNoise = fbm3D(boilPos * 0.42, 4) - 0.5;
-    float fineNoise = fbm3D(boilPos * 1.6, 5) - 0.5;
-    float radiusPerturb = 1.0 + lobeNoise * 0.9 + fineNoise * 0.35;
-    float radiusAtHeight = baseRadiusAtHeight * max(radiusPerturb, 0.15);
-    float distToCenter = length(toCenter) - (lobeNoise * baseRadiusAtHeight * 0.5);
-
-    float radialFalloff = 1.0 - smoothstep(radiusAtHeight * 0.35, radiusAtHeight * 1.15, max(distToCenter, 0.0));
-    float topFalloff = 1.0 - smoothstep(towerTop - 0.9, towerTop + 0.25 + fineNoise * 0.6, altitude);
-    float towerDensity = radialFalloff * topFalloff;
+    // Sphere-cluster shape (see sphereClusterSDF) — same "collection of spheres"
+    // construction as the scattered field, just with a bigger radius so the tall
+    // tower's individual lobes read at a scale proportionate to its height.
+    vec3 towerComovingP = vec3(warped.x, altitude, warped.y);
+    float towerSDF = sphereClusterSDF(towerComovingP, TOWER_CENTER_KM.xz, CLOUD_BASE_KM, towerTop, TOWER_RADIUS_KM * 1.3, TOWER_SEED);
+    float towerDensity = sdfToDensity(towerSDF, TOWER_RADIUS_KM * 0.16);
     towerDensity *= step(altitude, towerTop + 1.2);
 
     outIsTower = step(backgroundDensity, towerDensity);
