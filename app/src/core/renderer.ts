@@ -9,12 +9,13 @@ export function createRenderer(canvasHost: HTMLElement): THREE.WebGLRenderer {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // Tonemapping/gamma are done manually inside skyClouds.ts's fragment shader
-  // instead — a custom ShaderMaterial doesn't get three.js's automatic
-  // tonemapping/colorspace shader chunks, so leaving these at their defaults here
-  // would silently do nothing rather than double-apply.
+  // Clouds are now real MeshStandardMaterial instances (scene/clouds.ts) that
+  // *do* go through three.js's automatic tonemapping/colorspace shader chunks,
+  // so this needs to be on for them — unlike sky.ts's raw ShaderMaterial, which
+  // still does its own tonemapping manually and is unaffected by this setting.
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
   canvasHost.appendChild(renderer.domElement);
   return renderer;
 }
