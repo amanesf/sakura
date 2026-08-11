@@ -394,11 +394,11 @@ const FRAGMENT_SHADER = /* glsl */ `
 
   const int CLOUD_STEPS = 80;
   const int SHADOW_STEPS = 6;
-  const float CLOUD_EXTINCTION = 1.7;
+  const float CLOUD_EXTINCTION = 2.2;
 
   float lightMarch(vec3 p, vec3 sunDir, float time) {
     float shell = raySphere(p, sunDir, PLANET_CENTER, PLANET_RADIUS + TOWER_TOP_MAX_KM + 1.0).y;
-    float stepSize = min(shell, 3.0) / float(SHADOW_STEPS);
+    float stepSize = min(shell, 4.5) / float(SHADOW_STEPS);
     float accum = 0.0;
     vec3 pos = p;
     for (int i = 0; i < SHADOW_STEPS; i++) {
@@ -407,6 +407,22 @@ const FRAGMENT_SHADER = /* glsl */ `
       accum += cloudDensity(pos, time, dummy) * stepSize;
     }
     return exp(-accum * CLOUD_EXTINCTION);
+  }
+
+  // Quantizes x into N=steps mostly-flat bands with a narrow ramp between them —
+  // real-time volumetric raymarching integrates a smooth, continuous gradient,
+  // which reads as photographic/hazy. Japanese anime background art instead uses
+  // 2-3 *discrete* tonal zones per cloud (hard-edged shadow shape on a multiply
+  // layer, flat lit surface, one hard highlight stripe) — see the cloud-painting
+  // research this responds to. This is that quantization applied to the physical
+  // shadow term, not a hand-picked look: the band edges are still a function of
+  // the same computed self-shadow value, just discretized.
+  float posterizeSoft(float x, float steps) {
+    float scaled = x * steps;
+    float base = floor(scaled);
+    float frac = scaled - base;
+    float edge = smoothstep(0.15, 0.85, frac);
+    return clamp((base + edge) / steps, 0.0, 1.0);
   }
 
   // Energy-conserving multi-scatter approximation: sum attenuated single-scatter
@@ -441,7 +457,18 @@ const FRAGMENT_SHADER = /* glsl */ `
       float density = cloudDensity(samplePos, time, isTower);
       if (density <= 0.001) continue;
 
-      float shadow = lightMarch(samplePos, sunDir, time);
+      float rawShadow = lightMarch(samplePos, sunDir, time);
+      // Posterize the self-shadow term itself (not just the final color) so the
+      // discretization happens *before* it drives the phase/powder math below —
+      // otherwise those would still respond to the original continuous gradient
+      // and the quantization would only be skin-deep. Only 2 bands (not 3): the
+      // self-shadow value is itself noisy (it's a march through the same noisy
+      // density field), and 3+ narrow bands turn that noise into speckled salt-
+      // and-pepper flicker between adjacent bands instead of one coherent shadow
+      // shape. A wide, soft transition further keeps small noise from crossing
+      // the single boundary.
+      float shadow = posterizeSoft(rawShadow, 2.0);
+
       float a = 1.0, b = 1.0, c = 1.0;
       float lightEnergy = 0.0;
       for (int o = 0; o < 4; o++) {
@@ -452,20 +479,38 @@ const FRAGMENT_SHADER = /* glsl */ `
       float powder = 1.0 - exp(-density * 3.0 * CLOUD_EXTINCTION);
       lightEnergy *= mix(1.0, powder, clamp(phaseHG(mu, MIE_G), 0.0, 1.0) * 2.0);
 
+      // Split-tone: shadow zones pick up cool skylight (blue), lit zones pick up
+      // warm direct sunlight (yellow/orange) — anime cloud painting separates
+      // light and shadow by hue, not just brightness, rather than one neutral
+      // white shaded darker. Driven by the same posterized shadow value, so it
+      // steps in hard-edged bands together with the brightness.
+      vec3 shadowTint = vec3(0.4, 0.55, 0.92);
+      vec3 highlightTint = vec3(1.15, 1.02, 0.78);
+      vec3 sunColor = mix(shadowTint, highlightTint, shadow);
+
+      // Silver lining: a thin, still-mostly-transparent (high running
+      // transmittance) patch of cloud seen close to the sun direction lets a lot
+      // of forward-scattered light through and reads as a bright rim — the classic
+      // backlit-cloud-edge glow. Approximated from quantities already at hand
+      // (local density, view/sun alignment, how little cloud the ray has passed
+      // through so far) rather than a separate edge-detection pass.
+      float edgeThinness = 1.0 - smoothstep(0.0, 0.4, density);
+      float silverLining = edgeThinness * pow(clamp(mu, 0.0, 1.0), 10.0) * transmittance;
+
       // Direct term must be on the same radiometric scale as the atmosphere
       // (SUN_INTENSITY) — without it, clouds render orders of magnitude dimmer
       // than the sky behind them regardless of how correct the phase/shadow math
-      // is. Slight warm bias (0.97/0.9) approximates daylight sun color after
-      // minimal atmospheric filtering at high elevation.
-      vec3 sunColor = vec3(1.0, 0.97, 0.9);
+      // is.
       // Direct sunlight reaching the cloud has already lost some intensity to
       // atmospheric extinction on the way there — the primary-ray integral above
       // accounts for this along the *view* ray but not along the sun->cloud path
       // beyond what lightMarch's self-shadow term covers. CLOUD_DIRECT_SCALE
       // stands in for that missing transmittance term (full radiative-transfer
       // coupling between the two passes is a later refinement, not a color pick).
-      float CLOUD_DIRECT_SCALE = 1.1;
-      vec3 sampleLuminance = sunVisibility * lightEnergy * SUN_INTENSITY * CLOUD_DIRECT_SCALE * sunColor + ambientColor;
+      float CLOUD_DIRECT_SCALE = 1.35;
+      vec3 sampleLuminance = sunVisibility * lightEnergy * SUN_INTENSITY * CLOUD_DIRECT_SCALE * sunColor
+        + ambientColor
+        + silverLining * SUN_INTENSITY * 0.6 * highlightTint;
       float sampleExtinction = density * CLOUD_EXTINCTION;
       vec3 sampleTransmittance = vec3(exp(-sampleExtinction * stepSize));
       vec3 integScatter = (sampleLuminance - sampleLuminance * sampleTransmittance) / max(sampleExtinction, 1e-5);
@@ -509,7 +554,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       skyColor = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.9);
     }
 
-    vec3 ambientSky = vec3(0.55, 0.7, 1.0) * clamp(sunDir.y + 0.15, 0.05, 1.0) * SUN_INTENSITY * 0.028;
+    vec3 ambientSky = vec3(0.55, 0.7, 1.0) * clamp(sunDir.y + 0.15, 0.05, 1.0) * SUN_INTENSITY * 0.015;
     float sunVisibility = clamp(sunDir.y * 4.0 + 0.2, 0.0, 1.0);
 
     float cloudTransmittance = 1.0;
