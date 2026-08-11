@@ -144,12 +144,13 @@ const FRAGMENT_SHADER = /* glsl */ `
       skyColor = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.9);
     }
 
-    vec3 a = skyColor * (2.51 * skyColor + 0.03);
-    vec3 b = skyColor * (2.43 * skyColor + 0.59) + 0.14;
-    vec3 mapped = clamp(a / b, 0.0, 1.0);
-    mapped = pow(mapped, vec3(1.0 / 2.2));
-
-    gl_FragColor = vec4(mapped, 1.0);
+    // Left in linear HDR, no manual tonemapping/gamma here — now that main.ts
+    // runs an EffectComposer (core/postFx.ts), its OutputPass does both for
+    // every pass's output uniformly (this shader's and the cloud materials'
+    // alike). Doing it here too, on top of that, was fine back when this was
+    // the only pass writing straight to the screen, but stacked with
+    // OutputPass it would double-apply the sRGB curve and wash out shadows.
+    gl_FragColor = vec4(max(skyColor, 0.0), 1.0);
   }
 `;
 

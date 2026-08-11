@@ -5,17 +5,20 @@ import { createCamera } from './core/camera';
 import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials, createCloudCluster, type CloudClusterHandle } from './scene/clouds';
 import { sunDirection } from './core/solarPosition';
+import { createPostFx } from './core/postFx';
 
 const appHost = document.querySelector<HTMLDivElement>('#app')!;
 
 const renderer = createRenderer(appHost);
 const camera = createCamera(window.innerWidth / window.innerHeight);
-watchResize(renderer, camera);
 
 const scene = new THREE.Scene();
 
 const sky = createSky();
 scene.add(sky.mesh);
+
+const postFx = createPostFx(renderer, scene, camera);
+watchResize(renderer, camera, (w, h) => postFx.setSize(w, h));
 
 // plan.md: 「まず日中だけでいい」— time-of-day t is fixed at 0 (day) for now.
 const TIME_OF_DAY_T = 0;
@@ -144,7 +147,7 @@ function renderLoop() {
     c.handle.update(elapsed, growth, wind);
   }
 
-  renderer.render(scene, camera);
+  postFx.render();
 }
 
 renderLoop();

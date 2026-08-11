@@ -9,13 +9,13 @@ export function createRenderer(canvasHost: HTMLElement): THREE.WebGLRenderer {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  // Clouds are now real MeshStandardMaterial instances (scene/clouds.ts) that
-  // *do* go through three.js's automatic tonemapping/colorspace shader chunks,
-  // so this needs to be on for them — unlike sky.ts's raw ShaderMaterial, which
-  // still does its own tonemapping manually and is unaffected by this setting.
+  // core/postFx.ts's OutputPass is what actually applies tonemapping/colorspace
+  // now (both sky.ts and the cloud MeshStandardMaterials output linear HDR) —
+  // these renderer-level settings matter only in that they're what OutputPass
+  // reads.
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 1.2;
   canvasHost.appendChild(renderer.domElement);
   return renderer;
 }

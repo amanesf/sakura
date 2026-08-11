@@ -15,15 +15,23 @@ import { fbm3 } from '../core/buildNoise';
  * the job a real shadow map can't at this scale, for free.
  */
 export function buildNoduleGeometry(seed: number, flatten: number, undersideFloor: number): THREE.BufferGeometry {
-  const geometry = new THREE.SphereGeometry(1, 12, 5);
+  // Higher-poly than planet-canvas2's 12x5: that project viewed nodules from
+  // orbital distance where a coarse silhouette was invisible; our camera sits
+  // much closer (plan.md's fixed "bench" framing), so the same low-poly count
+  // read as faceted rock rather than soft cauliflower. Two displacement
+  // octaves — a coarse one for a few big lobes, a fine one riding on top for
+  // the actual cauliflower bumpiness — instead of one octave at a single
+  // frequency, which is what was producing a uniformly "rocky" surface.
+  const geometry = new THREE.SphereGeometry(1, 24, 14);
   const position = geometry.attributes.position;
   const v = new THREE.Vector3();
   for (let i = 0; i < position.count; i++) {
     v.fromBufferAttribute(position, i);
     const len = v.length();
     if (len < 1e-6) continue;
-    const n = fbm3(v.x * 2.6, v.y * 2.6, v.z * 2.6, seed, 3);
-    v.multiplyScalar(1 + n * 0.5);
+    const coarse = fbm3(v.x * 1.4, v.y * 1.4, v.z * 1.4, seed, 2);
+    const fine = fbm3(v.x * 4.2, v.y * 4.2, v.z * 4.2, seed + 91.0, 3);
+    v.multiplyScalar(1 + coarse * 0.42 + fine * 0.16);
     position.setXYZ(i, v.x, v.y, v.z);
   }
   geometry.scale(1, 0.72 * flatten, 1);

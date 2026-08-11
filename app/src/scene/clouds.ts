@@ -91,7 +91,7 @@ const coreGeometryCache = new Map<number, THREE.BufferGeometry>();
 function coreGeometryFor(variant: number): THREE.BufferGeometry {
   let g = coreGeometryCache.get(variant);
   if (!g) {
-    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.55);
+    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.64);
     coreGeometryCache.set(variant, g);
   }
   return g;
