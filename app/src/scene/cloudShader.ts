@@ -122,26 +122,40 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uWashAmount: { value: 0.2 },
       uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
-      uHighlightKnee: { value: 0.80 },
-      uHighlightGain: { value: 1.15 },
-      // Bright enough to clip to 255 through ACES at exposure 1.2 (anything
-      // past ~10 saturates), but not so far past it that the bloom threshold
-      // turns every white into a flare.
-      uWhiteHDR: { value: new THREE.Vector3(12.0, 12.0, 12.0) },
-      // Sky colour to fade toward, in the same inverse-tonemapped linear HDR
-      // space the ramp lives in — the value that sky.ts renders at mid
-      // height, sRGB(81,159,199), pushed back through the analytic inverse of
-      // three.js's ACES fit at exposure 1.2.
-      uHazeColor: { value: new THREE.Vector3(0.0523, 0.2322, 0.4532) },
+      uHighlightKnee: { value: 0.82 },
+      uHighlightGain: { value: 0.85 },
+      // 12.0 tonemapped to 254.9, i.e. pure white, and mix() does not clamp,
+      // so with a gain above 1 the blend overshot its target across a wide
+      // band of s. The measured result was that the render's entire top 5%
+      // was a flat (255,255,255) plateau, where the reference keeps gradation
+      // all the way up — its top 1% is 254, its top 5% is 251, and only about
+      // a tenth of a percent is truly pure white. 6.0 lands at ~253, so the
+      // crown can still reach white where it clips but no longer arrives
+      // there with a fifth of the cloud in tow.
+      uWhiteHDR: { value: new THREE.Vector3(8.5, 8.5, 8.5) },
+      // What distant cloud fades toward, in the same inverse-tonemapped linear
+      // HDR space the ramp lives in.
+      //
+      // This was previously the mid-height *sky* colour, sRGB(81,159,199), and
+      // that was the wrong target — it made distance darken cloud, when the
+      // reference does the opposite. Measured band by band down the frame, the
+      // reference's distant cloud gets *brighter* as it recedes (luminance 232
+      // near, 244 in the middle distance, 243 far) and converges on roughly
+      // sRGB(236,245,249); this render went 226 -> 229 -> 208, sinking instead
+      // of dissolving. Physically that is airlight: the haze between viewer
+      // and cloud is itself brightly lit, so what a distant object washes out
+      // toward is the pale luminous haze, not the deeper blue of the zenith.
+      uHazeColor: { value: new THREE.Vector3(0.8174, 1.9119, 3.19) },
       uHazeStart: { value: 12.0 },
-      uHazeDensity: { value: 0.032 },
+      uHazeDensity: { value: 0.033 },
+      uHazeMax: { value: 0.85 },
       // Cut hard from 0.45. With the lobe count raised to reference density,
       // nearly every pixel of the silhouette is near some lobe's grazing
       // angle, so a strong rim term stops being an edge accent and becomes a
       // flat brightness added to the whole cloud — the render went to 20% of
       // area at luminance 245+ against the reference's 11%, with only 5% left
       // below 205 against its 48%.
-      uRimStrength: { value: 0.38 },
+      uRimStrength: { value: 1.5 },
       // Contrast expansion applied to s before it indexes the ramp. Without
       // it the term is a sum of several roughly-uniform quantities, so it
       // piles up around 0.5 by the central limit theorem and the render comes
@@ -237,6 +251,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform vec3 uHazeColor;
       uniform float uHazeStart;
       uniform float uHazeDensity;
+      uniform float uHazeMax;
       uniform float uRimStrength;
       uniform float uContrast;
       uniform float uBias;
@@ -344,11 +359,21 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         float wash = clamp(dot(vWorldPos - uFieldCenter, normalize(uLightDir)) * uWashScale, -1.0, 1.0);
         s += wash * uWashAmount;
 
-        // Rim: grazing angles on the lit side go bright, the classic sunlit
-        // cumulus edge. Gated to the lit hemisphere so it can't halo the
-        // shadow side.
-        float fres = pow(1.0 - clamp(dot(n, normalize(vViewDirW)), 0.0, 1.0), 3.0);
-        s += fres * uRimStrength * smoothstep(-0.2, 0.5, ndl);
+        // Rim. Sampling the reference along its own silhouette showed this was
+        // gated backwards: the bright edge sits on the *shadow* side of the
+        // contour (peak 204 against an interior of 179, a lift of +25), while
+        // the lit side shows no lift at all — it is already bright there. This
+        // was gating the rim to the lit hemisphere, adding brightness exactly
+        // where the reference has none and leaving the shaded edges flat.
+        //
+        // It is also far more selective than a uniform outline. The median
+        // lift along the reference's contour is only +5, but a quarter of it
+        // carries more than +30 and an eighth more than +50 — strong accents
+        // placed on some edges, nothing on most. A high Fresnel exponent
+        // reproduces that: it confines the term to the most grazing pixels
+        // instead of spreading a weak glow along the whole silhouette.
+        float fres = pow(1.0 - clamp(dot(n, normalize(vViewDirW)), 0.0, 1.0), 4.0);
+        s += fres * uRimStrength * (1.0 - smoothstep(0.45, 1.0, lightTerm));
 
         s = clamp((s - 0.5) * uContrast + 0.5 - uBias, 0.0, 1.0);
 
@@ -384,7 +409,11 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // of it: every cluster came out at full contrast whatever its
         // distance, which is why nothing settled into the background and the
         // lower cloud never dissolved into the sky.
-        float haze = clamp(1.0 - exp(-max(vDist - uHazeStart, 0.0) * uHazeDensity), 0.0, 1.0);
+        // Capped below 1: now that the haze target is a bright pale value
+        // rather than the mid sky, letting it reach full strength bleaches the
+        // far bank into featureless white slabs. The reference's most distant
+        // cloud is bright (luminance ~243) but still carries its own modelling.
+        float haze = clamp(1.0 - exp(-max(vDist - uHazeStart, 0.0) * uHazeDensity), 0.0, uHazeMax);
 
         // Highlight concentration, and a real white.
         //
@@ -407,7 +436,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // 72% toward the sky colour, which is why the far bank kept coming out
         // as bright as the hero tower.
         float hot = smoothstep(uHighlightKnee, 1.0, s);
-        color = mix(color, uWhiteHDR, hot * uHighlightGain * (1.0 - haze));
+        color = mix(color, uWhiteHDR, clamp(hot * uHighlightGain, 0.0, 1.0) * (1.0 - haze));
 
         color = mix(color, uHazeColor, haze);
 
@@ -423,8 +452,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
   const halo = new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: new THREE.Vector3(haloColor.r, haloColor.g, haloColor.b) },
-      uOpacity: { value: 0.5 },
-      uFringePower: { value: 0.9 },
+      uOpacity: { value: 0.34 },
+      uFringePower: { value: 2.6 },
     },
     transparent: true,
     depthWrite: false,
@@ -450,12 +479,14 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       void main() {
         // Fade out face-on and keep only the grazing shell, so the fringe
         // reads as wispy edge rather than a uniform fog dome over the puff.
-        // Falloff exponent well below 1 (was 2.0). At 2.0 the fringe was
-        // confined to a hairline right at the grazing angle and, at the 0.08
-        // opacity it was carrying, contributed nothing — every cloud met the
-        // sky at a hard polygon boundary, which is most of why the lobes read
-        // as solid plastic balls rather than as condensed water. A broad, weak
-        // shell reads as the thinning optical depth at a cloud's edge.
+        // Exponent 2.6. This was widened to 0.9 to cure clouds meeting the sky
+        // at a hard polygon boundary, and overshot: measuring the 10-90%
+        // transition width all along the silhouette, 45% of this render's
+        // contour was soft (6px or wider) against the reference's 27%, and the
+        // median was 5px against its 3px. The reference's outline is mostly
+        // *crisp* — 39% of it resolves within 2px — with softness reserved for
+        // a minority of edges. Narrowing the shell restores that balance while
+        // keeping a real fringe rather than a bare polygon edge.
         float edge = pow(1.0 - clamp(dot(normalize(vNormalW), normalize(vViewDirW)), 0.0, 1.0), uFringePower);
         gl_FragColor = vec4(uColor, edge * uOpacity);
       }`,

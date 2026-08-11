@@ -42,7 +42,45 @@ const FRAGMENT_SHADER = /* glsl */ `
   const float MIE_G = 0.76;
   const float SUN_INTENSITY = 11.0;
   const float SKY_SATURATION = 1.7;
+  const float CIRRUS_ALTITUDE = 9.0;
+  const float CIRRUS_WIND_ANGLE = 0.26;
+  const vec3 CIRRUS_COLOR = vec3(0.3632, 1.0472, 2.3041);
+  const float CIRRUS_STRENGTH = 0.15;
+  // A pale neutral blue for the long-path sky near the horizon, and a ground
+  // placeholder in the same family rather than a warm one.
+  const vec3 HORIZON_HAZE = vec3(0.0859, 0.3001, 0.6167);
+  const float HORIZON_HAZE_STRENGTH = 0.95;
+  const vec3 GROUND_TINT = vec3(0.0797, 0.1445, 0.2182);
   const float CAMERA_ALTITUDE_KM = 0.0017;
+
+  // --- thin high cloud ---
+  //
+  // Subtracting a smooth gradient from the reference's clear sky leaves faint
+  // streaks: strongly elongated, roughly 10:1, all tilted the same way (about
+  // 15 degrees off horizontal, i.e. aligned to one upper-level wind), feathered
+  // at their ends, and pale — sRGB(204,228,244) against a sky of (80,163,215),
+  // covering about a quarter of the clear sky at a lift of a few luminance
+  // levels or more. Nothing of the sort existed here, which is part of why the
+  // upper sky read as an empty gradient.
+  //
+  // Placed on a real plane at altitude rather than drawn in screen space, so
+  // the perspective compression toward the horizon comes out for free.
+  float hash21(vec2 p) {
+    vec3 q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+  }
+  float vnoise2(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+               mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+  float fbm2(vec2 p) {
+    float a = 0.5, s = 0.0, n = 0.0;
+    for (int i = 0; i < 5; i++) { s += a * vnoise2(p); n += a; p *= 2.07; a *= 0.5; }
+    return s / n;
+  }
 
   vec2 raySphere(vec3 ro, vec3 rd, vec3 center, float radius) {
     vec3 oc = ro - center;
@@ -147,6 +185,57 @@ const FRAGMENT_SHADER = /* glsl */ `
     float sunDisc = smoothstep(0.9998, 0.99995, sunMu);
     skyColor += skyTransmittance * SUN_INTENSITY * sunDisc * 80.0;
 
+    // Thin high cloud, blended in before the ground tint so it cannot appear
+    // below the horizon.
+    if (rd.y > 0.004) {
+      float t = (CIRRUS_ALTITUDE - ro.y) / rd.y;
+      if (t > 0.0 && t < 900.0) {
+        vec3 hit = ro + rd * t;
+        float ca = cos(CIRRUS_WIND_ANGLE), sa = sin(CIRRUS_WIND_ANGLE);
+        vec2 q = vec2(hit.x * ca + hit.z * sa, -hit.x * sa + hit.z * ca);
+        // 10:1 anisotropy: long across the wind direction, tight across it.
+        float n = fbm2(vec2(q.x * 0.030, q.y * 0.155));
+        float cover = smoothstep(0.66, 0.94, n);
+        // Fade out toward the horizon, where the plane is grazed and the
+        // pattern would otherwise smear into an unbroken band, and fade in
+        // over the first few degrees so nothing pops at the horizon line.
+        // The horizon fade has to be generous: the plane is grazed there, so
+        // a few degrees of view direction cover tens of kilometres of it and
+        // any pattern stretches into unbroken bands across the frame.
+        cover *= smoothstep(0.22, 0.48, rd.y);
+        skyColor = mix(skyColor, CIRRUS_COLOR, cover * CIRRUS_STRENGTH);
+      }
+    }
+
+    // Horizon haze.
+    //
+    // Left alone, the physics puts a strong yellow-brown band across the lower
+    // sky: near the horizon the ray runs for hundreds of kilometres through
+    // dense low air, and Rayleigh extinction scales as the inverse fourth
+    // power of wavelength, so blue is stripped out of the transmitted light
+    // long before red is. That is genuinely what a hazy horizon does, but the
+    // reference does not read that way — its lower sky stays a pale blue-grey,
+    // around sRGB(126,176,203) even at the very bottom of the frame — because
+    // what fills that band there is scattered daylight off nearby haze and sea
+    // rather than a hundred kilometres of reddened sky. Pulling the long-path
+    // sky toward a pale neutral blue matches it, and keeps the frame in one
+    // colour family instead of splitting it into a blue top and a brown bottom.
+    // Confined to the band the reference actually desaturates in, and taken
+    // nearly to full strength inside it.
+    //
+    // Two things went wrong on the first attempt. The blend started at the
+    // horizon and reached a fifth of the way up the sky, so it drained colour
+    // out of the whole lower half rather than just the haze band. And at 0.72
+    // strength it did not actually reach its target: the mix happens in linear
+    // HDR, where the low sky's own value is very large, so even 28% of it left
+    // the result far brighter than intended — measured sRGB(191,218,233) at
+    // the horizon against the reference's (106,167,208). Matching the
+    // reference's profile instead: it holds a near-constant pale blue of about
+    // (115,177,214) everywhere below roughly 13 degrees elevation, and is
+    // untouched above ~20 degrees.
+    float lowSky = 1.0 - smoothstep(0.23, 0.36, rd.y);
+    skyColor = mix(skyColor, HORIZON_HAZE, lowSky * HORIZON_HAZE_STRENGTH);
+
     if (hitsGround) {
       // Ground is out of scope here (a composited foreground layer covers it
       // later, plan.md §5), but a flat tint applied at full strength right up
@@ -158,7 +247,11 @@ const FRAGMENT_SHADER = /* glsl */ `
       // NB smoothstep's edges must be given in increasing order — passing
       // them reversed is undefined in GLSL.
       float below = 1.0 - smoothstep(-0.07, 0.0, rd.y);
-      vec3 land = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.92);
+      // Tinted toward the same cool family as the cloud shadows rather than
+      // the dark olive it used to be: a warm ground under a cool sky reads as
+      // two unrelated pictures stacked, and the ground is meant to sit quietly
+      // behind a foreground layer, not to introduce a second colour scheme.
+      vec3 land = mix(skyColor, GROUND_TINT, 0.72);
       skyColor = mix(skyColor, land, below);
     }
 
