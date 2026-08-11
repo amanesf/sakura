@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/buildNoise';
-import { buildNoduleGeometry, buildFlatWhiteGeometry } from './cloudNodule';
+import { buildNoduleGeometry, buildHaloGeometry } from './cloudNodule';
 
 /**
  * Mesh-instanced clouds — replaces the earlier fullscreen volumetric raymarch
@@ -91,7 +91,7 @@ const coreGeometryCache = new Map<number, THREE.BufferGeometry>();
 function coreGeometryFor(variant: number): THREE.BufferGeometry {
   let g = coreGeometryCache.get(variant);
   if (!g) {
-    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.64);
+    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.6);
     coreGeometryCache.set(variant, g);
   }
   return g;
@@ -99,7 +99,7 @@ function coreGeometryFor(variant: number): THREE.BufferGeometry {
 
 let sharedHaloGeometry: THREE.BufferGeometry | null = null;
 function haloGeometryFor(): THREE.BufferGeometry {
-  if (!sharedHaloGeometry) sharedHaloGeometry = buildFlatWhiteGeometry(coreGeometryFor(0));
+  if (!sharedHaloGeometry) sharedHaloGeometry = buildHaloGeometry(7.0, 1);
   return sharedHaloGeometry;
 }
 
@@ -112,7 +112,7 @@ export function createCloudMaterials(sunDirection: THREE.Vector3): CloudMaterial
   const core = new THREE.MeshStandardMaterial({
     color: '#f2f0ee',
     vertexColors: true,
-    roughness: 0.96,
+    roughness: 0.88,
     emissive: '#ffffff',
     emissiveIntensity: 0.06,
   });
