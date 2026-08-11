@@ -155,7 +155,11 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // modelling where it clipped). Scaling so the tower's own extent stays
       // inside the clamp keeps the gradient linear across the whole mass.
       uWashScale: { value: 0.14 },
-      uWashAmount: { value: 0.34 },
+      // 0.34 -> 0.46. Cutting the wash to stop it clamping also cost the
+      // lateral read it exists for: gradX fell from -6.9 to -5.5 against the
+      // reference's -10.0. Half the reduction is given back, which the smaller
+      // uWashScale keeps inside the clamp.
+      uWashAmount: { value: 0.46 },
       uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
       uHighlightKnee: { value: 0.82 },
@@ -181,7 +185,22 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // of dissolving. Physically that is airlight: the haze between viewer
       // and cloud is itself brightly lit, so what a distant object washes out
       // toward is the pale luminous haze, not the deeper blue of the zenith.
-      uHazeColor: { value: new THREE.Vector3(0.8174, 1.9119, 3.19) },
+      // Re-measured on the current reference. The note above concluded that
+      // distant cloud gets *brighter* as it recedes (232 -> 244 -> 243) and set
+      // this to sRGB(234,244,249) accordingly. That reading came from the
+      // previous reference image; on 1786443741198.png the low bank does the
+      // opposite, falling steadily toward the horizon — cloud luminance by
+      // elevation band runs 220.5 at 9.1 deg, 215.8 at 6.3, 202.7 at 3.5 and
+      // 193.1 at 0.8. Against that, this render's bank measured 248.2 and
+      // 248.6 in the last two bands: 45 and 55 levels too bright, and washed
+      // to saturation 0.04 against the reference's 0.25-0.31. That is the
+      // blown-out white ribbon across the bottom of the frame.
+      //
+      // Retargeted to sRGB(162,203,227), the reference's own most-distant
+      // cloud colour. Still well above the sky it sits against (sRGB(109,170,
+      // 209) at that elevation), so the bank stays cloud rather than dissolving
+      // into the sky — it just stops being white.
+      uHazeColor: { value: new THREE.Vector3(0.1733, 0.4668, 0.8792) },
       uHazeStart: { value: 12.0 },
       uHazeDensity: { value: 0.033 },
       uHazeMax: { value: 0.85 },
@@ -191,7 +210,11 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // flat brightness added to the whole cloud — the render went to 20% of
       // area at luminance 245+ against the reference's 11%, with only 5% left
       // below 205 against its 48%.
-      uRimStrength: { value: 1.5 },
+      // 1.5 -> 1.9. The rim is added to s and then clamped, so raising the
+      // whole term (ambient floor + bias) left less headroom above it and the
+      // accent stopped registering: rimFrac fell from 5.0% to 3.9% against the
+      // reference's 5.3% without this term itself changing.
+      uRimStrength: { value: 1.9 },
       // Contrast expansion applied to s before it indexes the ramp. Without
       // it the term is a sum of several roughly-uniform quantities, so it
       // piles up around 0.5 by the central limit theorem and the render comes
@@ -200,7 +223,15 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // reference spans 148-252, and never produced a single white pixel
       // against the reference's 11% of area at 245+. Expanding around the
       // midpoint restores the tails at both ends.
-      uContrast: { value: 1.35 },
+      // 1.35 -> 1.80. With the multiple-scattering floor in place the median
+      // landed on the reference (229 against 230) but the dark tail collapsed:
+      // 5.7% of the mass below luminance 205 against the reference's 20.4%,
+      // and 0.1% below 190 against its 4.6%. A floor lifts the whole term, so
+      // the fix is spread rather than offset. Sized by inverting the ramp on
+      // both quartiles at once — the reference's p25/p75 sit at s = 0.244 and
+      // 0.87, the render's at 0.42 and 0.85, and the pair of equations gives
+      // very nearly this contrast with the bias below.
+      uContrast: { value: 1.80 },
       // Downward shift after the contrast expansion. Expanding around 0.5 is
       // symmetric, but the term's own mean sits above 0.5 (the rim and the
       // light-facing weight both push up), so without this the whole render
@@ -211,7 +242,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // luminance of 230 corresponds to s = 0.688 and the render's 204 to
       // s = 0.11, and the ambient floor and the relaxed occlusion/shadow/wash
       // terms above account for about 0.35 of that 0.58 gap between them.
-      uBias: { value: -0.35 },
+      uBias: { value: -0.38 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;

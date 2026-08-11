@@ -33,7 +33,18 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // source and the measured tonal separation immediately washed back out.
   // 7.0 sits just under the ramp's top entry (8.16), so only the genuinely
   // sunlit crown blooms rather than every lit lobe cap.
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.045, 0.65, 8.2);
+  // Strength 0.045 -> 0.12, radius 0.65 -> 0.80.
+  //
+  // This is now also what supplies the silhouette's soft edge, which the
+  // deleted fringe shell used to fake. Removing that shell took the render from
+  // far too soft to far too crisp — 87.5% of contour crossings 6px or wider,
+  // then 33.2%, against the reference's 56.6%, at a median of 16px then 2px
+  // against its 9px. Veiling glare around a bright cloud is a real optical
+  // effect and, unlike a geometric shell, it is depth-correct by construction
+  // and applies only where the cloud is actually bright — which matches the
+  // reference, whose soft edges are about half its contour rather than all of
+  // it. The threshold stays at 8.2 so only the genuinely sunlit crown blooms.
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.80, 8.2);
   composer.addPass(bloomPass);
 
   const gradePass = new ShaderPass(GradeShader);
