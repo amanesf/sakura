@@ -24,15 +24,15 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  // Threshold raised 0.86 -> 5.5 and strength cut 0.45 -> 0.10. The cloud
+  // Threshold raised 0.86 -> 7.0 and strength cut 0.45 -> 0.07. The cloud
   // material now emits the reference's measured colours *inverse-tonemapped*
   // into linear HDR (cloudRamp.ts), which puts its white crown at ~8.2 and
   // even its deepest shadow at ~0.02-0.5 — against the old 0.86 threshold the
   // entire cloud, shadows included, would have been treated as a bloom
   // source and the measured tonal separation immediately washed back out.
-  // 5.5 sits just under the ramp's top entries, so only the genuinely
-  // sunlit crown blooms.
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.1, 0.6, 5.5);
+  // 7.0 sits just under the ramp's top entry (8.16), so only the genuinely
+  // sunlit crown blooms rather than every lit lobe cap.
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.07, 0.6, 7.0);
   composer.addPass(bloomPass);
 
   const gradePass = new ShaderPass(GradeShader);

@@ -87,7 +87,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far a puff nestled among neighbours is pushed down the ramp.
       // Measured target: ~48% of the reference's cloud interior sits below
       // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.6 },
+      uOcclusion: { value: 0.36 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
@@ -101,7 +101,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // continuous ramp (too smooth) or hard cel bands (too graphic).
       uTiers: { value: 5.0 },
       uTierMix: { value: 0.7 },
-      uTerminator: { value: 0.75 },
+      uTerminator: { value: 0.68 },
+      uPerLobeTint: { value: 0.13 },
       // Cut hard from 0.45. With the lobe count raised to reference density,
       // nearly every pixel of the silhouette is near some lobe's grazing
       // angle, so a strong rim term stops being an edge accent and becomes a
@@ -117,27 +118,30 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // reference spans 148-252, and never produced a single white pixel
       // against the reference's 11% of area at 245+. Expanding around the
       // midpoint restores the tails at both ends.
-      uContrast: { value: 2.05 },
+      uContrast: { value: 1.35 },
       // Downward shift after the contrast expansion. Expanding around 0.5 is
       // symmetric, but the term's own mean sits above 0.5 (the rim and the
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.055 },
+      uBias: { value: -0.085 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
       attribute float aOcclusion;
       attribute float aSeed;
+      attribute float aTint;
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
       varying float vHeight;
       varying float vOcc;
+      varying float vTint;
       varying vec3 vNoisePos;
 
       void main() {
         vHeight = aHeight;
         vOcc = aOcclusion;
+        vTint = aTint;
         // Noise is sampled in the nodule's own object space plus a per-
         // instance offset, NOT in world space: a world-space field would make
         // the surface texture stand still while the cloud drifts through it
@@ -168,6 +172,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform float uTiers;
       uniform float uTierMix;
       uniform float uTerminator;
+      uniform float uPerLobeTint;
       uniform float uRimStrength;
       uniform float uContrast;
       uniform float uBias;
@@ -176,6 +181,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       varying vec3 vViewDirW;
       varying float vHeight;
       varying float vOcc;
+      varying float vTint;
       varying vec3 vNoisePos;
 
       ${NOISE_GLSL}
@@ -209,6 +215,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         s += (fbm(vNoisePos * uNoiseScale) - 0.5) * uNoiseAmount;
 
         s -= vOcc * uOcclusion;
+        s += vTint * uPerLobeTint;
 
         // Rim: grazing angles on the lit side go bright, the classic sunlit
         // cumulus edge. Gated to the lit hemisphere so it can't halo the

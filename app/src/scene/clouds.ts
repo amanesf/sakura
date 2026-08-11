@@ -153,7 +153,7 @@ function buildPuffCluster(
       // behind, while the render was a handful of large lobes with soft
       // gradients between them. No amount of shading noise produces edges —
       // only more, smaller silhouettes do.
-      const puffScale = Math.min(puffScaleRaw, radius * 0.3);
+      const puffScale = Math.min(puffScaleRaw, radius * 0.24);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
@@ -305,12 +305,23 @@ export function createCloudCluster(
   // all the same five base meshes.
   const occlusions = new Float32Array(nodules.length);
   const seeds = new Float32Array(nodules.length);
+  const tints = new Float32Array(nodules.length);
   for (let i = 0; i < nodules.length; i++) {
     occlusions[i] = nodules[i].burial;
-    seeds[i] = (nodules[i].base.x * 12.9898 + nodules[i].base.z * 78.233 + nodules[i].base.y * 37.719) % 17.0;
+    const h = (nodules[i].base.x * 12.9898 + nodules[i].base.z * 78.233 + nodules[i].base.y * 37.719) % 17.0;
+    seeds[i] = h;
+    // A per-lobe tonal offset. Every lobe is one of the same handful of base
+    // meshes lit by the same light, so each small one ends up with an
+    // identically bright cap and a crowd of them reads as popcorn — a texture
+    // of repeated identical highlights rather than a cloud. Nudging each
+    // lobe's whole shading term up or down a little breaks the repetition
+    // without disturbing the measured tonal distribution, since the offsets
+    // are symmetric about zero.
+    tints[i] = ((((h * 7.13) % 1.0) + 1.0) % 1.0) - 0.5;
   }
   coreGeom.setAttribute('aOcclusion', new THREE.InstancedBufferAttribute(occlusions, 1));
   coreGeom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+  coreGeom.setAttribute('aTint', new THREE.InstancedBufferAttribute(tints, 1));
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
