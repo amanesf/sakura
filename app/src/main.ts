@@ -23,9 +23,16 @@ const sunDir = sunDirection(TIME_OF_DAY_T);
 
 const clock = new THREE.Clock();
 
+// `?t=<seconds>` freezes the animation clock at an exact elapsed time — for
+// deterministic before/after screenshots of the wind drift / tower growth
+// (agent-workflow-policy.md §6 pattern) instead of waiting on the wall clock.
+const frozenElapsed = new URLSearchParams(window.location.search).has('t')
+  ? Number(new URLSearchParams(window.location.search).get('t'))
+  : null;
+
 function renderLoop() {
   requestAnimationFrame(renderLoop);
-  const elapsed = clock.getElapsedTime();
+  const elapsed = frozenElapsed ?? clock.getElapsedTime();
   updateSkyClouds(skyClouds, camera, sunDir, elapsed);
   renderer.render(scene, camera);
 }

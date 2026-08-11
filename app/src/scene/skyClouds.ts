@@ -253,21 +253,94 @@ const FRAGMENT_SHADER = /* glsl */ `
     return 1.0 - smoothstep(0.0, 1.0, d);
   }
 
+  const float CELL_SIZE_KM = 3.0;
+
+  // One procedural cumulus field cell, evaluated at a fixed grid coordinate
+  // (Worley-style: sample position looks up its own cell plus all 8 neighbors so a
+  // jittered cloud center near a cell edge still reaches across it). Every visual
+  // trait — occupied or empty sky, small/medium cumulus vs. a rare secondary
+  // cumulonimbus, size, growth phase — is a deterministic hash of the integer cell
+  // id, so re-running with the same cellId always yields the same cloud; variety
+  // comes from there being hundreds of cells across the visible sky, not from
+  // per-frame randomness. Addresses "雲は入道雲だけじゃないしさ" — most cells are
+  // small/medium cumulus, only ~10% of occupied cells grow into a tower.
+  float scatteredCumulusField(vec2 warped, float altitude, float time, float lobeNoise, float fineNoise) {
+    vec2 baseCell = floor(warped / CELL_SIZE_KM);
+    float total = 0.0;
+    for (int oy = -1; oy <= 1; oy++) {
+      for (int ox = -1; ox <= 1; ox++) {
+        vec2 cellId = baseCell + vec2(float(ox), float(oy));
+        vec3 h = vec3(hash13(vec3(cellId, 11.0)), hash13(vec3(cellId, 23.0)), hash13(vec3(cellId, 47.0)));
+        if (h.z < 0.42) continue; // ~58% of cells are open sky — real cumulus fields have gaps
+
+        vec2 jitter = (hash22(cellId * 3.71) - 0.5) * CELL_SIZE_KM * 0.75;
+        vec2 center = (cellId + 0.5) * CELL_SIZE_KM + jitter;
+
+        float isTower = step(0.9, h.z); // ~10% of occupied cells: a secondary cumulonimbus
+        float sizeRoll = h.x;
+        float seed = h.y;
+
+        float base = CLOUD_BASE_KM + hash13(vec3(cellId, 101.0)) * 0.35;
+        float radius = mix(0.45, 1.4, sizeRoll) * mix(1.0, 1.5, isTower);
+        float topSmall = base + mix(0.4, 1.6, sizeRoll);
+        float towerPhase = fract((time + seed * 53.0) / (TOWER_CYCLE_SECONDS * 0.75));
+        float topTower = base + towerGrowth(towerPhase) * (TOWER_TOP_MAX_KM * 0.6 - base);
+        float top = mix(topSmall, topTower, isTower);
+        float breathe = 0.9 + 0.1 * sin(time * 0.12 + seed * 25.0);
+        top *= mix(breathe, 1.0, isTower);
+
+        float distToCenter = length(warped - center);
+        float heightFrac = clamp((altitude - base) / max(top - base, 0.001), 0.0, 1.0);
+        // A single smooth bump (no flat plateau) — two independent smoothsteps
+        // with overlapping ranges hold the *same* max radius across a wide middle
+        // band, which reads as a flat-sided disc/mushroom stack once many cells
+        // line up, not a rounded puff. heightJitter also shifts *where* that bump
+        // sits per angle/position, so the widest point isn't a perfectly level
+        // ring around every cloud (see the hero tower's identical fix above).
+        float heightJitter = (fbm2D((warped - center) * 0.7) - 0.5) * 0.5;
+        float jitteredHeightFrac = clamp(heightFrac + heightJitter, 0.0, 1.0);
+        float bump = clamp(1.0 - pow(abs(jitteredHeightFrac * 2.0 - 0.85), 1.6), 0.0, 1.0);
+        float radiusProfile = mix(0.4, 1.0, bump);
+        float radiusAtHeight = radius * radiusProfile;
+
+        // Revolving any smooth radius(height) profile around a vertical axis is,
+        // by construction, a lens/saucer — real clouds break that symmetry with
+        // lumpy, angle-dependent noise. The previous ±25%-of-radius perturbation
+        // with a narrow falloff band was too weak/crisp to read as anything but a
+        // slightly bumpy disc; both the noise amplitude and the falloff width need
+        // to be a large fraction of the radius itself to actually hide the
+        // rotational symmetry.
+        float d = distToCenter - (lobeNoise * 0.95 + fineNoise * 0.45) * radiusAtHeight;
+        float radial = 1.0 - smoothstep(radiusAtHeight * 0.25, radiusAtHeight * 1.15, max(d, 0.0));
+        float topFall = 1.0 - smoothstep(top - 0.55, top + 0.1 + fineNoise * 0.5, altitude);
+        float baseFall = smoothstep(base - 0.1, base + 0.05, altitude);
+
+        total = max(total, radial * topFall * baseFall);
+      }
+    }
+    return total;
+  }
+
   float cloudDensity(vec3 p, float time, out float outIsTower) {
     float altitude = length(p - PLANET_CENTER) - PLANET_RADIUS;
     outIsTower = 0.0;
     if (altitude < CLOUD_BASE_KM) return 0.0;
 
-    vec2 windDrift = vec2(0.09, 0.03) * time; // ~90-30 m/s slab drift at this km/s-time scaling
-    vec2 flow = curl2D(p.xz * 0.12 + time * 0.015) * 0.6;
+    // Wind speed/curl strength tuned to be clearly visible frame-to-frame (not
+    // just a subtle drift) — see plan.md §3.3 "流れ". Kept moderate here because
+    // this warped coordinate also drives *which cell* a point falls in — too
+    // strong a curl smears whole cloud cells into unrecognizable ribbons instead
+    // of just drifting/billowing them. Extra turbulence for the boiling surface
+    // detail is layered on separately below, where it can't distort cell layout.
+    vec2 windDrift = vec2(0.16, 0.05) * time;
+    vec2 flow = curl2D(p.xz * 0.10 + time * 0.025) * 0.35;
     vec2 warped = p.xz + windDrift + flow;
 
-    // Background stratocumulus: low-altitude, low-relief, randomized coverage.
-    float coverage = fbm2D(warped * 0.10);
-    float backgroundMask = smoothstep(0.52, 0.78, coverage);
-    float backgroundVertical = 1.0 - smoothstep(CLOUD_BASE_KM, STRATO_TOP_KM, altitude);
-    float backgroundDetail = fbm3D(vec3(warped * 0.6, altitude * 0.8), 4);
-    float backgroundDensity = backgroundMask * backgroundVertical * (0.35 + 0.65 * backgroundDetail);
+    vec2 detailFlow = curl2D(p.xz * 0.32 + time * 0.06) * 0.55;
+    vec3 detailPos = vec3(warped + detailFlow, altitude - time * 0.05);
+    float fieldLobeNoise = fbm3D(detailPos * 0.45, 4) - 0.5;
+    float fieldFineNoise = fbm3D(detailPos * 1.7, 5) - 0.5;
+    float backgroundDensity = scatteredCumulusField(warped, altitude, time, fieldLobeNoise, fieldFineNoise);
 
     // Hero tower: fixed horizontal position (composition-matched), growth animated.
     float towerPhase = fract((time + TOWER_SEED * 37.0) / TOWER_CYCLE_SECONDS);
@@ -276,11 +349,19 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     vec2 toCenter = warped - TOWER_CENTER_KM.xz;
     float heightFrac = clamp((altitude - CLOUD_BASE_KM) / max(towerTop - CLOUD_BASE_KM, 0.001), 0.0, 1.0);
-    // Cumulonimbus silhouette bulges in the upper-middle (condensation swells
-    // fastest above the flat base) and only tapers again near the very top —
-    // a monotonic base->top taper reads as a spire/vase, not a thunderhead.
-    float radiusProfile = mix(0.5, 1.25, smoothstep(0.0, 0.4, heightFrac))
-      * (1.0 - 0.55 * smoothstep(0.82, 1.0, heightFrac));
+    // Cumulonimbus silhouette bulges in the upper-middle and tapers at both the
+    // (flat) base and the top — a single smooth bump, not two independently-timed
+    // smoothsteps, which would hold the same max radius across a wide band and
+    // read as a flat-sided drum/disc instead of a rounded, continuously-swelling
+    // thunderhead. Critically, the *height* of that bulge's equator is also
+    // jittered by angle/position (heightJitter) — otherwise, even with a heavily
+    // noise-perturbed radius, the widest point sits at exactly the same altitude
+    // all the way around the tower, which reads as a perfectly level ring (a
+    // flying-saucer silhouette) no matter how ragged its edge is.
+    float heightJitter = (fbm2D(toCenter * 0.55) - 0.5) * 0.45;
+    float jitteredHeightFrac = clamp(heightFrac + heightJitter, 0.0, 1.0);
+    float towerBump = clamp(1.0 - pow(abs(jitteredHeightFrac * 2.0 - 0.75), 1.3), 0.0, 1.0);
+    float radiusProfile = mix(0.55, 1.15, towerBump);
     float baseRadiusAtHeight = TOWER_RADIUS_KM * radiusProfile;
 
     // Vertical noise scroll biased upward, scaled by how actively the tower is
@@ -301,8 +382,8 @@ const FRAGMENT_SHADER = /* glsl */ `
 
     float erosion = worley3D(vec3(warped * 0.35, altitude * 0.35));
 
-    float radialFalloff = 1.0 - smoothstep(radiusAtHeight * 0.7, radiusAtHeight * 1.05, max(distToCenter, 0.0));
-    float topFalloff = 1.0 - smoothstep(towerTop - 0.8, towerTop + 0.3 + fineNoise * 0.6, altitude);
+    float radialFalloff = 1.0 - smoothstep(radiusAtHeight * 0.35, radiusAtHeight * 1.15, max(distToCenter, 0.0));
+    float topFalloff = 1.0 - smoothstep(towerTop - 0.9, towerTop + 0.25 + fineNoise * 0.6, altitude);
     float towerDensity = radialFalloff * topFalloff;
     towerDensity *= clamp(1.3 - erosion * 1.4, 0.0, 1.0);
     towerDensity *= step(altitude, towerTop + 1.2);
@@ -312,8 +393,8 @@ const FRAGMENT_SHADER = /* glsl */ `
   }
 
   const int CLOUD_STEPS = 80;
-  const int SHADOW_STEPS = 5;
-  const float CLOUD_EXTINCTION = 1.1;
+  const int SHADOW_STEPS = 6;
+  const float CLOUD_EXTINCTION = 1.7;
 
   float lightMarch(vec3 p, vec3 sunDir, float time) {
     float shell = raySphere(p, sunDir, PLANET_CENTER, PLANET_RADIUS + TOWER_TOP_MAX_KM + 1.0).y;
@@ -383,7 +464,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       // beyond what lightMarch's self-shadow term covers. CLOUD_DIRECT_SCALE
       // stands in for that missing transmittance term (full radiative-transfer
       // coupling between the two passes is a later refinement, not a color pick).
-      float CLOUD_DIRECT_SCALE = 0.6;
+      float CLOUD_DIRECT_SCALE = 1.1;
       vec3 sampleLuminance = sunVisibility * lightEnergy * SUN_INTENSITY * CLOUD_DIRECT_SCALE * sunColor + ambientColor;
       float sampleExtinction = density * CLOUD_EXTINCTION;
       vec3 sampleTransmittance = vec3(exp(-sampleExtinction * stepSize));
@@ -428,7 +509,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       skyColor = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.9);
     }
 
-    vec3 ambientSky = vec3(0.55, 0.7, 1.0) * clamp(sunDir.y + 0.15, 0.05, 1.0) * SUN_INTENSITY * 0.05;
+    vec3 ambientSky = vec3(0.55, 0.7, 1.0) * clamp(sunDir.y + 0.15, 0.05, 1.0) * SUN_INTENSITY * 0.028;
     float sunVisibility = clamp(sunDir.y * 4.0 + 0.2, 0.0, 1.0);
 
     float cloudTransmittance = 1.0;
