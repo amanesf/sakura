@@ -36,20 +36,42 @@ const FRAGMENT_SHADER = /* glsl */ `
   const vec3 PLANET_CENTER = vec3(0.0, -PLANET_RADIUS, 0.0);
   const vec3 RAYLEIGH_COEFF = vec3(5.8e-3, 13.5e-3, 33.1e-3);
   const float RAYLEIGH_SCALE_HEIGHT = 8.0;
-  const float MIE_COEFF = 9.0e-3;
+  // Turbidity. 9.0e-3 is a hazy-day aerosol load and it was measurably wrong
+  // for this reference: it fills the lower sky with a neutral forward-scattered
+  // glow, and the reference has no such glow — its sky is brightest around 15
+  // degrees elevation and *falls* again toward the horizon, which is the
+  // signature of a clean atmosphere. Solved against the reference's own
+  // per-elevation profile (scripts/skymodel.js), 3.0e-3 — a clear maritime
+  // summer value — sits within 0.2 RMSE of the unconstrained optimum while
+  // keeping a real aerosol term for the sunset arc the same constants have to
+  // serve later (plan.md §3.2).
+  const float MIE_COEFF = 3.0e-3;
   const float MIE_EXT = MIE_COEFF * 1.11;
   const float MIE_SCALE_HEIGHT = 1.2;
   const float MIE_G = 0.76;
-  const float SUN_INTENSITY = 11.0;
-  const float SKY_SATURATION = 1.7;
+  // 11.0 -> 7.0. The render's zenith measured luminance 142.5 against the
+  // reference's 107.6 — 35 levels too bright, and correspondingly washed out
+  // (saturation 0.66 against 0.84, red/blue 0.34 against 0.16). The whole sky
+  // was riding too high and the vivid deep blue the reference opens with was
+  // simply not reachable by re-saturating an over-exposed integral.
+  const float SUN_INTENSITY = 7.0;
+  const float SKY_SATURATION = 1.65;
   const float CIRRUS_ALTITUDE = 9.0;
   const float CIRRUS_WIND_ANGLE = 0.26;
-  const vec3 CIRRUS_COLOR = vec3(0.3632, 1.0472, 2.3041);
-  const float CIRRUS_STRENGTH = 0.15;
-  // A pale neutral blue for the long-path sky near the horizon, and a ground
-  // placeholder in the same family rather than a warm one.
-  const vec3 HORIZON_HAZE = vec3(0.0859, 0.3001, 0.6167);
-  const float HORIZON_HAZE_STRENGTH = 0.95;
+  // Whiter: sRGB(222,238,248) rather than (212,233,246).
+  const vec3 CIRRUS_COLOR = vec3(0.4836, 1.3152, 2.8100);
+  const float CIRRUS_STRENGTH = 0.13;
+  // A pale neutral blue for the long-path sky near the horizon, and a second,
+  // darker value reached at the horizon itself.
+  //
+  // A single flat haze colour cannot reproduce the reference's low sky: it
+  // rises to a peak near 15 degrees (luminance 178.5) and falls again to 159.8
+  // at the horizon, and a constant necessarily plateaus. Adding the floor
+  // colour took the fit's RMSE from 6.4 to 3.1.
+  const vec3 HORIZON_HAZE = vec3(0.12, 0.35, 0.80);
+  const vec3 HORIZON_HAZE_FLOOR = vec3(0.07, 0.265, 0.55);
+  const float HORIZON_HAZE_FLOOR_HI = 0.18;
+  const float HORIZON_HAZE_STRENGTH = 0.94;
   const vec3 GROUND_TINT = vec3(0.0797, 0.1445, 0.2182);
   const float CAMERA_ALTITUDE_KM = 0.0017;
 
@@ -149,7 +171,10 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec3 singleScatter = SUN_INTENSITY * (totalRayleigh * RAYLEIGH_COEFF * phaseR + totalMie * MIE_COEFF * phaseM);
 
     vec3 lostEnergy = vec3(1.0) - transmittance;
-    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.004 * clamp(sunDir.y * 1.5 + 0.4, 0.05, 1.0);
+    // 0.004 -> 0.010. With the primary integral turned down to match the
+    // reference's zenith, this near-achromatic term is what refills the middle
+    // elevations, where single scattering alone left the profile too dark.
+    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.010 * clamp(sunDir.y * 1.5 + 0.4, 0.05, 1.0);
 
     return singleScatter + multiScatterFudge;
   }
@@ -195,7 +220,18 @@ const FRAGMENT_SHADER = /* glsl */ `
         vec2 q = vec2(hit.x * ca + hit.z * sa, -hit.x * sa + hit.z * ca);
         // 10:1 anisotropy: long across the wind direction, tight across it.
         float n = fbm2(vec2(q.x * 0.030, q.y * 0.155));
-        float cover = smoothstep(0.66, 0.94, n);
+        // The ramp is compressed (was 0.66..0.94). The noise is roughly normal
+        // about 0.5, so a ramp reaching to 0.94 was ~3.7 standard deviations
+        // out: cover almost never approached 1, and the plane rendered as a
+        // broad wash of *partial* cover instead of distinct streaks. That is
+        // exactly why the high cloud read blue — at partial cover the blend
+        // leaves the sky's own colour dominant, so the result is a blue veil
+        // rather than white cirrus. Measured, this render covered 28.4% of its
+        // clear sky at a lift of 4 or more against the reference's 11.7%, while
+        // reaching a peak lift of only 36 against the reference's 53: too much
+        // area, too little contrast. Raising the onset and shortening the ramp
+        // moves both — fewer streaks, each of which actually reaches white.
+        float cover = smoothstep(0.70, 0.82, n);
         // Fade out toward the horizon, where the plane is grazed and the
         // pattern would otherwise smear into an unbroken band, and fade in
         // over the first few degrees so nothing pops at the horizon line.
@@ -233,8 +269,9 @@ const FRAGMENT_SHADER = /* glsl */ `
     // reference's profile instead: it holds a near-constant pale blue of about
     // (115,177,214) everywhere below roughly 13 degrees elevation, and is
     // untouched above ~20 degrees.
-    float lowSky = 1.0 - smoothstep(0.23, 0.36, rd.y);
-    skyColor = mix(skyColor, HORIZON_HAZE, lowSky * HORIZON_HAZE_STRENGTH);
+    float lowSky = 1.0 - smoothstep(0.17, 0.53, rd.y);
+    vec3 hazeColor = mix(HORIZON_HAZE_FLOOR, HORIZON_HAZE, smoothstep(0.0, HORIZON_HAZE_FLOOR_HI, rd.y));
+    skyColor = mix(skyColor, hazeColor, lowSky * HORIZON_HAZE_STRENGTH);
 
     if (hitsGround) {
       // Ground is out of scope here (a composited foreground layer covers it
@@ -288,7 +325,12 @@ const FRAGMENT_SHADER = /* glsl */ `
     // horizon path is aerosol-dominated, and aerosol scattering is
     // wavelength-neutral), so the stylisation has no business strengthening
     // it: the lift belongs to the clean Rayleigh zenith only.
-    float horizonFade = smoothstep(-0.02, 0.28, rd.y);
+    // Fade widened to 0.57 (was 0.28). Solved, not chosen: with the haze band
+    // now reaching to 0.53, a saturation lift that was already at full strength
+    // by 0.28 was re-saturating the pale haze it had just been blended with,
+    // which is what kept the render's low sky at saturation 0.5-0.6 where the
+    // reference sits at 0.44.
+    float horizonFade = smoothstep(-0.02, 0.57, rd.y);
     float skyLuma = dot(skyColor, vec3(0.2126, 0.7152, 0.0722));
     skyColor = mix(vec3(skyLuma), skyColor, mix(1.0, SKY_SATURATION, horizonFade));
 

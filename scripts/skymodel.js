@@ -40,6 +40,14 @@ const P = {
   HAZE_G: 0.3001,
   HAZE_B: 0.6167,
   HAZE_STRENGTH: 0.95,
+  // Second, darker haze colour reached at the horizon itself. A single flat
+  // haze constant cannot reproduce the reference's low sky, which *rises* to a
+  // peak around 15 degrees and then falls again toward the horizon (178.5 at
+  // 14.6 deg, 159.8 at 0.8 deg); a constant necessarily plateaus.
+  HAZE_LO_R: 0.12,
+  HAZE_LO_G: 0.31,
+  HAZE_LO_B: 0.66,
+  HAZE_FLOOR_HI: 0.23,
   HAZE_LO: 0.23,
   HAZE_HI: 0.36,
   SAT_FADE_LO: -0.02,
@@ -47,6 +55,10 @@ const P = {
   MULTI_SCATTER: 0.004,
   EXPOSURE: 1.2,
   CAMERA_ALTITUDE_KM: 0.0017,
+  CIRRUS_R: 0.4836,
+  CIRRUS_G: 1.3152,
+  CIRRUS_B: 2.81,
+  CIRRUS_STRENGTH: 0.15,
 };
 
 const FOV_V_DEG = 50;
@@ -197,15 +209,31 @@ function sunVec() {
 }
 
 /** One pixel of sky, in display sRGB 0-255. Cirrus is omitted (it is noise). */
-function skyPixel(p, x, y) {
+function skyPixel(p, x, y, cover = 0) {
   const rd = rayDir(x, y);
   const ro = [0, p.CAMERA_ALTITUDE_KM, 0];
   const sun = sunVec();
   const atmos = raySphere(ro, rd, -p.PLANET_RADIUS, p.ATMOS_RADIUS);
   let col = integrateAtmosphere(p, ro, rd, sun, Math.max(atmos[1], 0.001));
 
+  // Thin high cloud, blended into the raw scattering exactly where sky.ts does
+  // it — before the horizon haze and before the saturation lift. `cover` is the
+  // noise mask's value, passed in rather than evaluated: what matters for
+  // sizing the constant is the lift at full cover, which is the statistic the
+  // reference was measured for.
+  if (cover > 0) {
+    const cir = [p.CIRRUS_R, p.CIRRUS_G, p.CIRRUS_B];
+    const m = cover * p.CIRRUS_STRENGTH;
+    col = col.map((c, k) => c + (cir[k] - c) * m);
+  }
+
   const lowSky = 1 - smoothstep(p.HAZE_LO, p.HAZE_HI, rd[1]);
-  const haze = [p.HAZE_R, p.HAZE_G, p.HAZE_B];
+  const toHorizon = smoothstep(0, p.HAZE_FLOOR_HI, rd[1]);
+  const haze = [
+    p.HAZE_LO_R + (p.HAZE_R - p.HAZE_LO_R) * toHorizon,
+    p.HAZE_LO_G + (p.HAZE_G - p.HAZE_LO_G) * toHorizon,
+    p.HAZE_LO_B + (p.HAZE_B - p.HAZE_LO_B) * toHorizon,
+  ];
   col = col.map((c, k) => c + (haze[k] - c) * lowSky * p.HAZE_STRENGTH);
 
   const horizonFade = smoothstep(p.SAT_FADE_LO, p.SAT_FADE_HI, rd[1]);
@@ -308,7 +336,23 @@ for (let i = 0; i < args.length; i++) {
 }
 const p = { ...P, ...overrides };
 
-if (args.includes('--solve')) {
+if (args.includes('--cirrus')) {
+  // Luminance lift at full cover, for the elevations the cirrus plane actually
+  // covers. Reference: the streaks over its clear sky peak at +53 luminance and
+  // occupy ~12% of it; this render measured +36 over 28%.
+  const lumOf = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  console.log('CIRRUS_STRENGTH -> luminance lift at full cover');
+  for (const st of [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5]) {
+    const q = { ...p, CIRRUS_STRENGTH: st };
+    const out = [];
+    for (const y of [60, 140, 220]) {
+      const base = lumOf(skyPixel(q, 995, y, 0));
+      const lit = lumOf(skyPixel(q, 995, y, 1));
+      out.push(`y${y}: ${base.toFixed(0)}->${lit.toFixed(0)} (+${(lit - base).toFixed(1)})`);
+    }
+    console.log(`  ${st.toFixed(2)}  ${out.join('   ')}`);
+  }
+} else if (args.includes('--solve')) {
   // Coordinate descent over the parameters that shape the elevation profile.
   // SUN_INTENSITY sets overall level; MIE_COEFF lifts and neutralises the
   // horizon (it is the turbidity term, concentrated in the low 1.2km);
@@ -324,6 +368,10 @@ if (args.includes('--solve')) {
     ['HAZE_R', 0.0, 3.0, 0.01],
     ['HAZE_G', 0.0, 4.0, 0.01],
     ['HAZE_B', 0.0, 6.0, 0.02],
+    ['HAZE_LO_R', 0.0, 1.0, 0.005],
+    ['HAZE_LO_G', 0.0, 1.5, 0.005],
+    ['HAZE_LO_B', 0.0, 2.0, 0.01],
+    ['HAZE_FLOOR_HI', 0.02, 0.5, 0.01],
     ['SAT_FADE_HI', 0.02, 0.9, 0.01],
     ['MULTI_SCATTER', 0.0, 0.03, 0.0005],
   ];
