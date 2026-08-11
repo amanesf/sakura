@@ -24,13 +24,26 @@ watchResize(renderer, camera, (w, h) => postFx.setSize(w, h));
 const TIME_OF_DAY_T = 0;
 const sunDir = sunDirection(TIME_OF_DAY_T);
 
+// Art-directed key light for the clouds — deliberately *not* the true sun
+// direction above. Per the Guilty Gear Xrd cel-shading research, professional
+// stylized 3D lighting is chosen for how the form reads, not physical
+// accuracy: requested here is a raking cross-light with the source up, to the
+// left, and near the camera, light travelling down toward the right and into
+// the distance ("左手前から右奥方向へ") rather than straight down from above.
+const CLOUD_LIGHT_DIR = new THREE.Vector3(-0.55, 0.7, 0.55).normalize();
+
+// The color a shaded cloud crevice should read as — actual sky color, not a
+// hand-picked blue or a neutral darkening toward black/grey (「影は黒っぽく
+// するんじゃなくて空の色を混ぜて」). Matches sky.ts's zenith tone.
+const SKY_TINT = new THREE.Color(0.4, 0.62, 0.95);
+
 const sun = new THREE.DirectionalLight('#fff6e8', 3.2);
-sun.position.copy(sunDir).multiplyScalar(50);
+sun.position.copy(CLOUD_LIGHT_DIR).multiplyScalar(50);
 scene.add(sun);
-const hemi = new THREE.HemisphereLight('#bcd4ff', '#3a4a3f', 0.9);
+const hemi = new THREE.HemisphereLight(SKY_TINT, '#3a4a3f', 0.9);
 scene.add(hemi);
 
-const materials = createCloudMaterials(sunDir);
+const materials = createCloudMaterials(CLOUD_LIGHT_DIR);
 
 /** Simplified thermal-rise growth curve — ported from the shader version this
  * replaces (see plan.md §3.3): height ~ sqrt(t) while rising, then a hold,
@@ -83,7 +96,7 @@ function addCluster(
   cycleSeconds: number,
   windScale = 1,
 ): void {
-  const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials);
+  const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials, SKY_TINT);
   scene.add(handle.group);
   clusters.push({
     handle,

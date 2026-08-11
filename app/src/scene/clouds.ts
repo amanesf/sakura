@@ -15,6 +15,7 @@ import { buildNoduleGeometry, buildHaloGeometry } from './cloudNodule';
 interface PuffSpec {
   position: THREE.Vector3; // base (pre-wind) position, km
   scale: number;
+  stretch: THREE.Vector3; // per-axis scale multiplier — non-uniform puffs, not just uniform balls
   rotationY: number;
   levelFrac: number; // 0 (base) .. 1 (top) — used to fade in with growth
   burial: number; // 0 (fully exposed) .. 1 (tucked in a crevice) — filled in after placement
@@ -23,6 +24,7 @@ interface PuffSpec {
 interface Nodule {
   base: THREE.Vector3;
   scale: number;
+  stretch: THREE.Vector3;
   rotationY: number;
   levelFrac: number;
   burial: number;
@@ -42,6 +44,13 @@ export interface CloudClusterHandle {
  * (few levels, roughly constant radius) or a towering cumulonimbus (many
  * levels, bulging in the upper-middle per real cumulonimbus proportions).
  */
+// Non-uniform per-axis scale — a puff that's stretched on x/z or squashed on
+// y reads as an irregular lump rather than a perfect ball, cheaply (no extra
+// geometry, just an anisotropic instance-matrix scale).
+function randomStretch(rand: () => number): THREE.Vector3 {
+  return new THREE.Vector3(0.65 + rand() * 0.85, 0.7 + rand() * 0.6, 0.65 + rand() * 0.85);
+}
+
 function buildPuffCluster(
   seed: number,
   centerXZ: THREE.Vector2,
@@ -82,12 +91,21 @@ function buildPuffCluster(
       const dist = Math.sqrt(c.x * c.x + c.z * c.z) / Math.max(radius, 1e-4);
       const rankSize = Math.pow(0.78, i);
       const bulk = 1 - dist * 0.55;
-      const grain = 0.8 + rand() * rand() * 1.4;
+      // Wide size variety ("サイズもバラバラに") instead of the previous
+      // narrow 0.8-2.2 band: mostly small/medium grains with occasional
+      // larger ones. Capped at 2.0 (was an unbounded pow(rand,2.2)*3.2 tail
+      // that could spike a single puff to ~3.6x — one puff that large
+      // swallows an entire level's worth of neighbours into one smooth
+      // sphere, which is the opposite of "小さく複雑な塊".
+      const grain = 0.45 + Math.pow(rand(), 2.2) * 1.55;
       // 0.62→0.82: the reference has essentially no sky visible between
       // lobes within the body of the cloud — puffs need to overlap generously,
       // not just touch, or gaps show through as translucent halo instead of
       // solid mass.
-      const puffScale = radius * 0.82 * rankSize * bulk * grain * (0.7 + rand() * 0.5);
+      const puffScaleRaw = radius * 0.82 * rankSize * bulk * grain * (0.6 + rand() * 0.7);
+      // Hard cap relative to the level radius: no single puff should be able
+      // to outgrow the band it's scattered in, whatever grain rolled.
+      const puffScale = Math.min(puffScaleRaw, radius * 0.95);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
@@ -95,7 +113,8 @@ function buildPuffCluster(
       const scale = Math.max(puffScale, radius * 0.08, levelSpacing * 0.36);
       const yJitter = (rand() - 0.5) * levelSpacing * 1.1;
       const position = new THREE.Vector3(centerXZ.x + c.x, levelAlt + yJitter, centerXZ.y + c.z);
-      puffs.push({ position, scale, rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
+      const stretch = randomStretch(rand);
+      puffs.push({ position, scale, stretch, rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
 
       // A tier of small satellite puffs riding on each main puff — "小さく
       //複雑な塊" (reference-image analysis: the silhouette is a hierarchy of
@@ -103,16 +122,17 @@ function buildPuffCluster(
       // ones), not texture or a single size of ball. At least one guaranteed
       // (was 0-2, i.e. often none at all — undercounted against a reference
       // that has zero "plain, unscalloped" puffs).
-      const satelliteCount = 1 + Math.floor(rand() * 2.5);
+      const satelliteCount = 1 + Math.floor(rand() * 3.2);
       for (let s = 0; s < satelliteCount; s++) {
         const sa = rand() * Math.PI * 2;
-        const sr = puffs[puffs.length - 1].scale * (0.55 + rand() * 0.35);
+        const sr = puffs[puffs.length - 1].scale * (0.45 + rand() * 0.55);
         const satPos = position.clone().add(
           new THREE.Vector3(Math.cos(sa) * sr, (rand() - 0.5) * sr * 0.6, Math.sin(sa) * sr),
         );
         puffs.push({
           position: satPos,
-          scale: puffs[puffs.length - 1].scale * (0.32 + rand() * 0.22),
+          scale: puffs[puffs.length - 1].scale * (0.24 + rand() * 0.34),
+          stretch: randomStretch(rand),
           rotationY: rand() * Math.PI * 2,
           levelFrac: t,
           burial: 0,
@@ -144,10 +164,10 @@ function buildPuffCluster(
 }
 
 const coreGeometryCache = new Map<number, THREE.BufferGeometry>();
-function coreGeometryFor(variant: number): THREE.BufferGeometry {
+function coreGeometryFor(variant: number, skyTint: THREE.Color): THREE.BufferGeometry {
   let g = coreGeometryCache.get(variant);
   if (!g) {
-    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.6);
+    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.6, skyTint);
     coreGeometryCache.set(variant, g);
   }
   return g;
@@ -164,7 +184,16 @@ export interface CloudMaterials {
   halo: THREE.MeshStandardMaterial;
 }
 
-export function createCloudMaterials(sunDirection: THREE.Vector3): CloudMaterials {
+/**
+ * lightDirection here is a deliberately *art-directed* key light, not
+ * necessarily the true astronomical sun direction — per the Guilty Gear Xrd
+ * research (plan.md discussion): professional cel-look 3D doesn't trust
+ * physically-correct lighting for its shading reads either, artists bend it
+ * toward whatever direction makes the form/rim read best. Requested framing
+ * is a raking cross-light — source at left-and-near, light travelling toward
+ * right-and-far — rather than top-down, for a more dramatic rim/depth read.
+ */
+export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMaterials {
   const core = new THREE.MeshStandardMaterial({
     color: '#f2f0ee',
     vertexColors: true,
@@ -178,7 +207,7 @@ export function createCloudMaterials(sunDirection: THREE.Vector3): CloudMaterial
   // dusk/dawn — the two terms planet-canvas2 added "on request (新海誠的な)"
   // on top of the baked gradient + standard PBR lighting.
   core.onBeforeCompile = (shader) => {
-    shader.uniforms.uSunDir = { value: sunDirection };
+    shader.uniforms.uSunDir = { value: lightDirection };
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 uSunDir;')
       .replace(
@@ -220,18 +249,20 @@ export function createCloudCluster(
   radiusProfile: (t: number) => number,
   puffsPerLevel: number,
   materials: CloudMaterials,
+  skyTint: THREE.Color,
 ): CloudClusterHandle {
   const specs = buildPuffCluster(seed, centerXZ, baseAlt, topAlt, levels, radiusProfile, puffsPerLevel);
   const nodules: Nodule[] = specs.map((s) => ({
     base: s.position,
     scale: s.scale,
+    stretch: s.stretch,
     rotationY: s.rotationY,
     levelFrac: s.levelFrac,
     burial: s.burial,
   }));
 
   const group = new THREE.Group();
-  const coreGeom = coreGeometryFor(Math.floor(seed) % 5);
+  const coreGeom = coreGeometryFor(Math.floor(seed) % 5, skyTint);
   const haloGeom = haloGeometryFor();
 
   const coreMesh = new THREE.InstancedMesh(coreGeom, materials.core, nodules.length);
@@ -241,16 +272,20 @@ export function createCloudCluster(
 
   // Crevice tint as a per-instance colour multiplier (three.js's
   // InstancedMesh.instanceColor, multiplied against the geometry's own baked
-  // vertex-colour gradient automatically) — narrow range and blue-shifted,
-  // per the reference-image analysis: the dark notches between lobes are
-  // subtle (roughly 15-25% darker, not a black pit) and shift toward blue
-  // rather than just losing brightness neutrally.
+  // vertex-colour gradient automatically) — narrow range, and blended toward
+  // the *actual sky color* (skyTint) rather than a fixed guess or toward
+  // black: per the "影は黒っぽくするんじゃなくて空の色を混ぜて" direction, a
+  // shadowed crevice is lit by ambient skylight, so it should read as "made
+  // of" that same sky color, just less of the direct-sun brightness.
   const instanceColors = new Float32Array(nodules.length * 3);
+  const white = new THREE.Color(1, 1, 1);
+  const instColor = new THREE.Color();
   for (let i = 0; i < nodules.length; i++) {
-    const b = nodules[i].burial;
-    instanceColors[i * 3] = THREE.MathUtils.lerp(1.0, 0.82, b);
-    instanceColors[i * 3 + 1] = THREE.MathUtils.lerp(1.0, 0.87, b);
-    instanceColors[i * 3 + 2] = THREE.MathUtils.lerp(1.0, 0.98, b);
+    const b = nodules[i].burial * 0.55; // keep it subtle — see cloudNodule.ts's same reasoning
+    instColor.copy(white).lerp(skyTint, b);
+    instanceColors[i * 3] = instColor.r;
+    instanceColors[i * 3 + 1] = instColor.g;
+    instanceColors[i * 3 + 2] = instColor.b;
   }
   coreMesh.instanceColor = new THREE.InstancedBufferAttribute(instanceColors, 3);
 
@@ -270,12 +305,12 @@ export function createCloudCluster(
       q.setFromAxisAngle(up, n.rotationY);
 
       const coreScale = n.scale * Math.max(growthVisibility, 0.0001);
-      s.set(coreScale, coreScale, coreScale);
+      s.set(coreScale * n.stretch.x, coreScale * n.stretch.y, coreScale * n.stretch.z);
       m.compose(p, q, s);
       coreMesh.setMatrixAt(i, m);
 
       const haloScale = coreScale * HALO_SCALE;
-      s.set(haloScale, haloScale, haloScale);
+      s.set(haloScale * n.stretch.x, haloScale * n.stretch.y, haloScale * n.stretch.z);
       m.compose(p, q, s);
       haloMesh.setMatrixAt(i, m);
     }

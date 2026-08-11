@@ -14,7 +14,12 @@ import { fbm3 } from '../core/buildNoise';
  * meet" — flat, however lumpy the outline is. A fixed vertical gradient does
  * the job a real shadow map can't at this scale, for free.
  */
-export function buildNoduleGeometry(seed: number, flatten: number, undersideFloor: number): THREE.BufferGeometry {
+export function buildNoduleGeometry(
+  seed: number,
+  flatten: number,
+  undersideFloor: number,
+  skyTint: THREE.Color = new THREE.Color(0.55, 0.7, 1.0),
+): THREE.BufferGeometry {
   // Higher-poly than planet-canvas2's 12x5: that project viewed nodules from
   // orbital distance where a coarse silhouette was invisible; our camera sits
   // much closer (plan.md's fixed "bench" framing), so the same low-poly count
@@ -43,15 +48,26 @@ export function buildNoduleGeometry(seed: number, flatten: number, undersideFloo
   geometry.scale(1, 0.72 * flatten, 1);
   geometry.computeVertexNormals();
 
+  // Shadow color mixes in the *actual* sky color (skyTint, passed down from
+  // main.ts's atmosphere-derived ambient) rather than darkening toward black/
+  // grey or a hand-picked blue — a shaded cloud underside is lit by scattered
+  // skylight, so its color should visibly be "made of" the sky it's under.
   const colors = new Float32Array(position.count * 3);
-  const span = 1 - undersideFloor;
   const halfHeight = 0.72 * flatten;
+  const white = new THREE.Color(1, 1, 1);
+  const shadeColor = new THREE.Color();
   for (let i = 0; i < position.count; i++) {
     const t = THREE.MathUtils.clamp(position.getY(i) / halfHeight, -1, 1);
-    const shade = undersideFloor + (t * 0.5 + 0.5) * span;
-    colors[i * 3] = shade;
-    colors[i * 3 + 1] = shade;
-    colors[i * 3 + 2] = Math.min(1, shade * 1.04); // shaded underside goes cool, not just dark
+    // undersideFloor still controls how far down the white->sky-tint blend
+    // reaches (a higher floor = the shadow tint only shows very close to the
+    // true underside), by biasing the blend curve rather than changing the
+    // colors being blended between.
+    const litRaw = t * 0.5 + 0.5;
+    const lit = THREE.MathUtils.clamp(THREE.MathUtils.mapLinear(litRaw, 1 - (1 - undersideFloor) * 2, 1, 0, 1), 0, 1);
+    shadeColor.copy(skyTint).lerp(white, lit);
+    colors[i * 3] = shadeColor.r;
+    colors[i * 3 + 1] = shadeColor.g;
+    colors[i * 3 + 2] = shadeColor.b;
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   return geometry;
