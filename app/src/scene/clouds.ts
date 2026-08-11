@@ -54,6 +54,13 @@ function buildPuffCluster(
   const rand = mulberry32(seed >>> 0);
   const puffs: PuffSpec[] = [];
   const heightSpan = Math.max(topAlt - baseAlt, 0.001);
+  // Fixed vertical step between levels, independent of radiusProfile — where
+  // the profile pinches in (near the base and top), puffs shrink with it, and
+  // a shrunk puff no longer reaches far enough to overlap its neighbouring
+  // level, opening a visible gap band. This was reading as a tiered "wedding
+  // cake" instead of one continuous tower. minPuffScale (below) and a bigger
+  // vertical jitter fix it directly rather than fighting the profile shape.
+  const levelSpacing = levels > 1 ? heightSpan / (levels - 1) : heightSpan;
 
   for (let l = 0; l < levels; l++) {
     const t = levels === 1 ? 0.35 : l / (levels - 1);
@@ -76,15 +83,27 @@ function buildPuffCluster(
       const rankSize = Math.pow(0.78, i);
       const bulk = 1 - dist * 0.55;
       const grain = 0.8 + rand() * rand() * 1.4;
-      const puffScale = radius * 0.62 * rankSize * bulk * grain * (0.7 + rand() * 0.5);
-      const position = new THREE.Vector3(centerXZ.x + c.x, levelAlt + (rand() - 0.5) * radius * 0.18, centerXZ.y + c.z);
-      puffs.push({ position, scale: Math.max(puffScale, radius * 0.08), rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
+      // 0.62→0.82: the reference has essentially no sky visible between
+      // lobes within the body of the cloud — puffs need to overlap generously,
+      // not just touch, or gaps show through as translucent halo instead of
+      // solid mass.
+      const puffScale = radius * 0.82 * rankSize * bulk * grain * (0.7 + rand() * 0.5);
+      // Guarantee vertical reach across at least ~70% of a level step, and
+      // scatter within a wider vertical band (was radius*0.18, tiny compared
+      // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
+      // interleave instead of sitting in strict horizontal bands.
+      const scale = Math.max(puffScale, radius * 0.08, levelSpacing * 0.36);
+      const yJitter = (rand() - 0.5) * levelSpacing * 1.1;
+      const position = new THREE.Vector3(centerXZ.x + c.x, levelAlt + yJitter, centerXZ.y + c.z);
+      puffs.push({ position, scale, rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
 
       // A tier of small satellite puffs riding on each main puff — "小さく
       //複雑な塊" (reference-image analysis: the silhouette is a hierarchy of
       // round scallops at 2-3 size scales, large lobes rimmed with medium
-      // ones), not texture or a single size of ball.
-      const satelliteCount = Math.floor(rand() * 2.2);
+      // ones), not texture or a single size of ball. At least one guaranteed
+      // (was 0-2, i.e. often none at all — undercounted against a reference
+      // that has zero "plain, unscalloped" puffs).
+      const satelliteCount = 1 + Math.floor(rand() * 2.5);
       for (let s = 0; s < satelliteCount; s++) {
         const sa = rand() * Math.PI * 2;
         const sr = puffs[puffs.length - 1].scale * (0.55 + rand() * 0.35);

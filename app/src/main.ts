@@ -55,7 +55,10 @@ const TOWER_RADIUS = 2.4;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
   const bump = Math.max(0, 1 - Math.abs(t * 2 - 0.7) ** 1.3);
-  return TOWER_RADIUS * THREE.MathUtils.lerp(0.5, 1.15, bump);
+  // Floor raised 0.5→0.68: the reference tower stays visually chunky right up
+  // to its crown — no thin "neck" anywhere — so the taper toward top/base
+  // needs to be gentler than the profile that made the neck gap visible.
+  return TOWER_RADIUS * THREE.MathUtils.lerp(0.68, 1.15, bump);
 }
 
 interface AnimatedCluster {
@@ -65,6 +68,7 @@ interface AnimatedCluster {
   baseAlt: number;
   topAltFull: number;
   windSpeed: THREE.Vector2;
+  windScale: number;
 }
 
 const clusters: AnimatedCluster[] = [];
@@ -77,6 +81,7 @@ function addCluster(
   levels: number,
   puffsPerLevel: number,
   cycleSeconds: number,
+  windScale = 1,
 ): void {
   const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials);
   scene.add(handle.group);
@@ -85,12 +90,23 @@ function addCluster(
     cycleSeconds,
     phaseOffset: seed * 37.0,
     baseAlt: CLOUD_BASE_ALT,
+    windScale,
     topAltFull,
     windSpeed: new THREE.Vector2(0.16, 0.05),
   });
 }
 
-addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 7, 3, TOWER_CYCLE_SECONDS);
+// Density/complexity numbers below were re-derived by actually counting the
+// reference image (1786418841252.png): the visible tower crop shows 15-20+
+// distinct lobes with essentially *no* gaps of sky between them — packed
+// solid, not a sparse arrangement of a dozen separated balls. levels=7/
+// puffsPerLevel=3 (plus 0-2 satellites) was off by close to an order of
+// magnitude from that.
+// windScale 0.2: the hero tower's position is composition-anchored (solved
+// against the reference image's measured screen coordinates, see camera.ts) —
+// letting it drift on the same wind budget as decorative background cumulus
+// carried it out of frame within seconds. It still sways, just gently.
+addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 12, 6, TOWER_CYCLE_SECONDS, 0.05);
 
 // A handful of smaller cumulus scattered around the tower for variety
 // (plan.md: 「雲は入道雲だけじゃないしさ」) — deterministic seeded positions,
@@ -142,7 +158,7 @@ function renderLoop() {
     const WRAP_DISTANCE = 26;
     const angle = 0.35 + 0.25 * Math.sin(elapsed * 0.01 + c.phaseOffset * 0.7);
     const gust = 0.8 + 0.3 * Math.sin(elapsed * 0.04 + c.phaseOffset);
-    const dist = positiveMod(elapsed * 0.11 * gust + c.phaseOffset * 3.1, WRAP_DISTANCE) - WRAP_DISTANCE / 2;
+    const dist = (positiveMod(elapsed * 0.11 * gust + c.phaseOffset * 3.1, WRAP_DISTANCE) - WRAP_DISTANCE / 2) * c.windScale;
     const wind = new THREE.Vector2(Math.cos(angle) * dist, Math.sin(angle) * dist);
     c.handle.update(elapsed, growth, wind);
   }
