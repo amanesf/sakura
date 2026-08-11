@@ -553,9 +553,25 @@ const FRAGMENT_SHADER = /* glsl */ `
       // painting shades an implicit smooth solid, not a participating medium.
       vec3 normal = cloudNormal(samplePos, time);
       float NdotL = dot(normal, sunDir);
+
+      // 厚塗り (thick-paint) research: the boundary between tones in real brush
+      // painting is never a mathematically perfect curve — it's built from
+      // overlapping opaque strokes, so the edge is ragged/irregular, and the
+      // inside of each tone zone still carries visible stroke-to-stroke texture
+      // rather than being perfectly flat. A pure posterizeSoft(NdotL) boundary is
+      // a geometrically perfect isoline of the smooth normal field, which is
+      // exactly what reads as "not hand-painted." Perturbing the posterize input
+      // with mid-frequency noise breaks that boundary up into an irregular, brush-
+      // like edge instead.
+      float brushNoise = fbm3D(samplePos * 0.8, 3) - 0.5;
+      float paintedTone = clamp(NdotL * 0.5 + 0.5 + brushNoise * 0.22, 0.0, 1.0);
       // 4 bands, not 3 — the cloud-painting research describes base/midtone/dark/
       // highlight as four distinct tonal steps, not three.
-      float shadow = posterizeSoft(clamp(NdotL * 0.5 + 0.5, 0.0, 1.0), 4.0);
+      float shadow = posterizeSoft(paintedTone, 4.0);
+      // Fine texture *within* a tone zone (stroke-to-stroke value variation,
+      // rather than one flat fill) — applied after quantization so it doesn't
+      // fight the tonal steps, just roughens each one.
+      float strokeTexture = 1.0 + (fbm3D(samplePos * 2.4, 3) - 0.5) * 0.14;
 
       // Cast shadow from other cloud mass (e.g. a tower's own overhang darkening
       // what's beneath it) stays as a *continuous* secondary multiplier — folding
@@ -587,7 +603,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       vec3 litColor = baseCloudColor * shadowMultiply;
       float highlightMask = smoothstep(0.68, 1.0, shadow);
       vec3 highlightAdd = vec3(0.35, 0.28, 0.14) * highlightMask;
-      vec3 sunColor = litColor + highlightAdd;
+      vec3 sunColor = (litColor + highlightAdd) * strokeTexture;
       vec3 highlightTint = vec3(1.15, 1.02, 0.78);
 
       // Silver lining: a thin, still-mostly-transparent (high running
