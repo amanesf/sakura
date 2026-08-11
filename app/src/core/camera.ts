@@ -29,7 +29,13 @@ export const CAMERA_PITCH_DEG = solveHorizonPitchDeg(HORIZON_SCREEN_FRACTION, CA
 export const CAMERA_ALTITUDE_KM = 0.0017;
 
 export function createCamera(aspect: number): THREE.PerspectiveCamera {
-  const camera = new THREE.PerspectiveCamera(CAMERA_VERTICAL_FOV_DEG, aspect, 0.001, 50);
+  // Far plane 400km, not 50. The distant cloud tiers that give the lower sky
+  // its depth sit 50-95km out, and at 50 they were simply clipped away — the
+  // far bank rendered as nothing at all. Depth precision is not a concern
+  // here: nothing in this scene relies on fine depth sorting (the clouds are
+  // instanced meshes at wildly different distances and the sky is a
+  // fullscreen pass), so the near plane can stay tight without banding.
+  const camera = new THREE.PerspectiveCamera(CAMERA_VERTICAL_FOV_DEG, aspect, 0.01, 400);
   camera.position.set(0, 0, 0);
   camera.rotation.order = 'YXZ';
   camera.rotation.x = THREE.MathUtils.degToRad(CAMERA_PITCH_DEG);

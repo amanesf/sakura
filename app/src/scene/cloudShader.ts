@@ -87,13 +87,13 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far a puff nestled among neighbours is pushed down the ramp.
       // Measured target: ~48% of the reference's cloud interior sits below
       // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.36 },
+      uOcclusion: { value: 0.46 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
       uNoiseAmount: { value: 0.34 },
       uNoiseScale: { value: 2.1 },
-      uDetailAmount: { value: 0.14 },
+      uDetailAmount: { value: 0.2 },
       uDetailScale: { value: 6.5 },
       // 多段階: soft posterisation. Plateaus at uTiers levels with smoothstep
       // transitions between them — the painted look of discrete shadow
@@ -103,6 +103,20 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uTierMix: { value: 0.7 },
       uTerminator: { value: 0.68 },
       uPerLobeTint: { value: 0.13 },
+      uDetailFocus: { value: 0.4 },
+      uHighlightKnee: { value: 0.93 },
+      uHighlightGain: { value: 0.9 },
+      // Bright enough to clip to 255 through ACES at exposure 1.2 (anything
+      // past ~10 saturates), but not so far past it that the bloom threshold
+      // turns every white into a flare.
+      uWhiteHDR: { value: new THREE.Vector3(12.0, 12.0, 12.0) },
+      // Sky colour to fade toward, in the same inverse-tonemapped linear HDR
+      // space the ramp lives in — the value that sky.ts renders at mid
+      // height, sRGB(81,159,199), pushed back through the analytic inverse of
+      // three.js's ACES fit at exposure 1.2.
+      uHazeColor: { value: new THREE.Vector3(0.0523, 0.2322, 0.4532) },
+      uHazeStart: { value: 12.0 },
+      uHazeDensity: { value: 0.032 },
       // Cut hard from 0.45. With the lobe count raised to reference density,
       // nearly every pixel of the silhouette is near some lobe's grazing
       // angle, so a strong rim term stops being an edge accent and becomes a
@@ -124,7 +138,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.085 },
+      uBias: { value: -0.01 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -137,6 +151,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       varying float vOcc;
       varying float vTint;
       varying vec3 vNoisePos;
+      varying float vDist;
 
       void main() {
         vHeight = aHeight;
@@ -156,7 +171,9 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         mat3 instNormal = mat3(instanceMatrix);
         vec3 n = normalize(instNormal * normal);
         vNormalW = normalize(mat3(modelMatrix) * n);
-        vViewDirW = normalize(cameraPosition - worldPos.xyz);
+        vec3 toCam = cameraPosition - worldPos.xyz;
+        vDist = length(toCam);
+        vViewDirW = normalize(toCam);
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }`,
     fragmentShader: /* glsl */ `
@@ -173,6 +190,13 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform float uTierMix;
       uniform float uTerminator;
       uniform float uPerLobeTint;
+      uniform float uDetailFocus;
+      uniform float uHighlightKnee;
+      uniform float uHighlightGain;
+      uniform vec3 uWhiteHDR;
+      uniform vec3 uHazeColor;
+      uniform float uHazeStart;
+      uniform float uHazeDensity;
       uniform float uRimStrength;
       uniform float uContrast;
       uniform float uBias;
@@ -183,6 +207,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       varying float vOcc;
       varying float vTint;
       varying vec3 vNoisePos;
+      varying float vDist;
 
       ${NOISE_GLSL}
 
@@ -209,10 +234,24 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
 
         float s = lightTerm * uWeightLight + heightTerm * uWeightHeight;
 
-        // Broad noise only at this stage: this is the term that makes whole
-        // shadow regions grow and bleed irregularly instead of following
-        // clean geometric bands ("にじむ").
-        s += (fbm(vNoisePos * uNoiseScale) - 0.5) * uNoiseAmount;
+        // Detail budget. Measuring where contrast actually sits, the
+        // reference spends 48% of its cloud area on *calm* surface (local
+        // std below 6 in an 11x11 window) and only 17% on busy surface; this
+        // render was the other way round at 27%/42%, and its 99th-percentile
+        // gradient was 51 against the reference's 25 — i.e. busier AND
+        // harder-edged everywhere at once. That is what reads as "not
+        // painted": a painter blocks in large quiet masses and spends marks
+        // only where the form turns. Detail is therefore concentrated into
+        // the terminator band, peaking where the surface is half-lit and
+        // falling away in both the fully-lit crown and the settled shadow.
+        // This is also why the post-process filter could not fix the look —
+        // a filter sees only the finished image and has no way to know which
+        // regions deserved the marks.
+        float detailGate = mix(1.0, 4.0 * lightTerm * (1.0 - lightTerm), uDetailFocus);
+
+        // Broad noise: makes whole shadow regions grow and bleed irregularly
+        // instead of following clean geometric bands ("にじむ").
+        s += (fbm(vNoisePos * uNoiseScale) - 0.5) * uNoiseAmount * detailGate;
 
         s -= vOcc * uOcclusion;
         s += vTint * uPerLobeTint;
@@ -233,13 +272,51 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // Brush tooth goes on *after* the posterisation, not before. Measured
         // the other way round: inside a plateau the smoothstep is flat at both
         // ends, so it erased most of the fine variation and the render's local
-        // gradient energy fell to 0.59 against the reference's 2.60 — flatter
-        // than the un-posterised version had been. Blocking in flat shapes
-        // first and texturing over them is also the order a painter works in.
-        s += (tooth(vNoisePos * uDetailScale) - 0.5) * uDetailAmount;
+        // gradient energy fell below the un-posterised version. Blocking in
+        // flat shapes first and texturing over them is also the order a
+        // painter works in.
+        s += (tooth(vNoisePos * uDetailScale) - 0.5) * uDetailAmount * detailGate;
         s = clamp(s, 0.0, 1.0);
 
-        gl_FragColor = vec4(texture2D(uRamp, vec2(s, 0.5)).rgb, 1.0);
+        vec3 color = texture2D(uRamp, vec2(s, 0.5)).rgb;
+
+        // Aerial perspective. In the reference the cloud's tonal range
+        // collapses with height in frame — the spread between its 5th and
+        // 95th luminance percentiles falls from 88 near the top to 38 in the
+        // lower-middle bands, a 2.3x compression — because cloud that is
+        // further away has more atmosphere in front of it, losing its shadows
+        // and drifting toward the sky's own colour. This render applied none
+        // of it: every cluster came out at full contrast whatever its
+        // distance, which is why nothing settled into the background and the
+        // lower cloud never dissolved into the sky.
+        float haze = clamp(1.0 - exp(-max(vDist - uHazeStart, 0.0) * uHazeDensity), 0.0, 1.0);
+
+        // Highlight concentration, and a real white.
+        //
+        // Measured, the reference puts only 5.5% of its cloud area above
+        // luminance 248 but takes it all the way to a true 255, with 79% of
+        // that white massed into a handful of large blobs. This render had
+        // twice the white area (11.1%) and never got past 253 — a sprinkle of
+        // identical bright caps instead of a few decisive sunlit faces.
+        //
+        // 253 was not a tuning failure but a ceiling: the ramp is sampled from
+        // the reference with the top 2% of pixels trimmed off (they are sky
+        // bleeding through gaps), so its brightest entry is sRGB(251,254,254)
+        // and nothing indexing it can ever be whiter than that. So the top of
+        // the range is taken *past* the ramp, toward a value high enough to
+        // clip white through the tonemapper.
+        //
+        // Gated by (1 - haze) as well as by a late smoothstep. Without the
+        // haze gate the boost simply outranks the aerial perspective below —
+        // a distant lobe pushed to 12.0 is still near-white after being mixed
+        // 72% toward the sky colour, which is why the far bank kept coming out
+        // as bright as the hero tower.
+        float hot = smoothstep(uHighlightKnee, 1.0, s);
+        color = mix(color, uWhiteHDR, hot * uHighlightGain * (1.0 - haze));
+
+        color = mix(color, uHazeColor, haze);
+
+        gl_FragColor = vec4(color, 1.0);
       }`,
   });
 
@@ -262,7 +339,9 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         vec4 instanced = instanceMatrix * vec4(position, 1.0);
         vec4 worldPos = modelMatrix * instanced;
         vNormalW = normalize(mat3(modelMatrix) * normalize(mat3(instanceMatrix) * normal));
-        vViewDirW = normalize(cameraPosition - worldPos.xyz);
+        vec3 toCam = cameraPosition - worldPos.xyz;
+        vDist = length(toCam);
+        vViewDirW = normalize(toCam);
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }`,
     fragmentShader: /* glsl */ `

@@ -89,14 +89,15 @@ function addCluster(
   puffsPerLevel: number,
   cycleSeconds: number,
   windScale = 1,
+  baseAlt = CLOUD_BASE_ALT,
 ): void {
-  const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials, CLOUD_LIGHT_DIR);
+  const handle = createCloudCluster(seed, center, baseAlt, topAltFull, levels, radiusProfile, puffsPerLevel, materials, CLOUD_LIGHT_DIR);
   scene.add(handle.group);
   clusters.push({
     handle,
     cycleSeconds,
     phaseOffset: seed * 37.0,
-    baseAlt: CLOUD_BASE_ALT,
+    baseAlt,
     windScale,
     topAltFull,
     windSpeed: new THREE.Vector2(0.16, 0.05),
@@ -115,7 +116,7 @@ function addCluster(
 // carried it out of frame within seconds. It still sways, just gently.
 addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 18, 16, TOWER_CYCLE_SECONDS, 0.05);
 
-// A handful of smaller cumulus scattered around the tower for variety
+// A handful of smaller cumulus scattered around the tower
 // (plan.md: 「雲は入道雲だけじゃないしさ」) — deterministic seeded positions,
 // not yet the full infinite procedural field the shader version had.
 const SMALL_CUMULUS = [
@@ -130,6 +131,58 @@ for (const c of SMALL_CUMULUS) {
   const radiusProfile = (t: number) => c.radius * THREE.MathUtils.lerp(0.7, 1.0, Math.sin(t * Math.PI));
   addCluster(c.seed, new THREE.Vector2(c.x, c.z), c.top, radiusProfile, 4, 6, TOWER_CYCLE_SECONDS * 1.4);
 }
+
+// The distant cloud bank — 裾野.
+//
+// Counting cloud coverage row by row in the reference shows the scene is not
+// one tower in empty sky: coverage runs about 3% at the top of the frame,
+// peaks near 46% across the tower's own band, and then rises again to 50-77%
+// across the whole bottom half, where a continuous low bank spans the full
+// width and thins toward the horizon. This scene had nothing of the sort —
+// a hero tower and six small isolated puffs, with the entire lower sky empty,
+// which is why the composition read as a single object floating rather than
+// as weather.
+//
+// These sit far enough back that the aerial-perspective term in the cloud
+// shader does most of the work on them: they arrive already low-contrast and
+// tending toward the sky colour, which is the "下部が薄く空に溶け込む" read.
+// They are wide and squat rather than towering (a low cumulus field seen
+// nearly edge-on from a fixed low camera presents as horizontal banding), and
+// they drift on the full wind budget since nothing anchors them
+// compositionally.
+// Two depth tiers, because one is not enough to read as depth. The
+// reference's lower sky is not a single row of cloud but layers at
+// visibly different distances, each flatter and bluer than the one in
+// front — that stacking is what makes the bottom of the frame recede
+// instead of sitting on the horizon like a wall.
+//
+// Distances matter more than sizes here: a cluster placed close and made
+// small still renders at close-range contrast, so it reads as a small
+// nearby cloud rather than a big far one. Pushing these genuinely far back
+// lets the shader's aerial-perspective term do the work, and also keeps
+// them above the horizon line by geometry alone (at 45km out, a 1.6km base
+// still sits about 2 degrees up).
+const BANK_TIERS = [
+  { count: 16, zNear: 26, zSpan: 16, baseAlt: 1.5, topLo: 2.4, topHi: 4.4, radLo: 2.6, radHi: 5.0, xStep: 4.4, wind: 0.5 },
+  { count: 20, zNear: 48, zSpan: 34, baseAlt: 1.8, topLo: 4.0, topHi: 8.0, radLo: 4.0, radHi: 9.0, xStep: 6.2, wind: 0.3 },
+];
+BANK_TIERS.forEach((tier, t) => {
+  for (let i = 0; i < tier.count; i++) {
+    const seed = 130.7 + t * 313.1 + i * 41.3;
+    // Irregular spacing, not a grid — an evenly spaced row of similar banks
+    // reads as wallpaper.
+    const x = -tier.xStep * tier.count * 0.5 + i * tier.xStep + Math.sin(i * 2.7 + t) * tier.xStep * 0.8;
+    const z = -(tier.zNear + ((i * 7.3) % tier.zSpan) + Math.abs(Math.cos(i * 1.9 + t)) * tier.zSpan * 0.4);
+    const radius = tier.radLo + ((i * 3.7) % (tier.radHi - tier.radLo));
+    const top = tier.topLo + ((i * 2.3) % (tier.topHi - tier.topLo));
+    // Squat profile: widest near the base and tapering fast, so the
+    // silhouette is a long low mound rather than a ball. A low cumulus field
+    // seen nearly edge-on from a fixed low camera presents as horizontal
+    // banding, not as towers.
+    const radiusProfile = (u: number) => radius * THREE.MathUtils.lerp(1.0, 0.4, u * u);
+    addCluster(seed, new THREE.Vector2(x, z), top, radiusProfile, 3, 8, TOWER_CYCLE_SECONDS * 2.1, tier.wind, tier.baseAlt);
+  }
+});
 
 const clock = new THREE.Clock();
 const frozenElapsed = new URLSearchParams(window.location.search).has('t')
