@@ -17,6 +17,7 @@ interface PuffSpec {
   scale: number;
   rotationY: number;
   levelFrac: number; // 0 (base) .. 1 (top) — used to fade in with growth
+  burial: number; // 0 (fully exposed) .. 1 (tucked in a crevice) — filled in after placement
 }
 
 interface Nodule {
@@ -24,6 +25,7 @@ interface Nodule {
   scale: number;
   rotationY: number;
   levelFrac: number;
+  burial: number;
 }
 
 export interface CloudClusterHandle {
@@ -75,13 +77,48 @@ function buildPuffCluster(
       const bulk = 1 - dist * 0.55;
       const grain = 0.8 + rand() * rand() * 1.4;
       const puffScale = radius * 0.62 * rankSize * bulk * grain * (0.7 + rand() * 0.5);
-      puffs.push({
-        position: new THREE.Vector3(centerXZ.x + c.x, levelAlt + (rand() - 0.5) * radius * 0.18, centerXZ.y + c.z),
-        scale: Math.max(puffScale, radius * 0.08),
-        rotationY: rand() * Math.PI * 2,
-        levelFrac: t,
-      });
+      const position = new THREE.Vector3(centerXZ.x + c.x, levelAlt + (rand() - 0.5) * radius * 0.18, centerXZ.y + c.z);
+      puffs.push({ position, scale: Math.max(puffScale, radius * 0.08), rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
+
+      // A tier of small satellite puffs riding on each main puff — "小さく
+      //複雑な塊" (reference-image analysis: the silhouette is a hierarchy of
+      // round scallops at 2-3 size scales, large lobes rimmed with medium
+      // ones), not texture or a single size of ball.
+      const satelliteCount = Math.floor(rand() * 2.2);
+      for (let s = 0; s < satelliteCount; s++) {
+        const sa = rand() * Math.PI * 2;
+        const sr = puffs[puffs.length - 1].scale * (0.55 + rand() * 0.35);
+        const satPos = position.clone().add(
+          new THREE.Vector3(Math.cos(sa) * sr, (rand() - 0.5) * sr * 0.6, Math.sin(sa) * sr),
+        );
+        puffs.push({
+          position: satPos,
+          scale: puffs[puffs.length - 1].scale * (0.32 + rand() * 0.22),
+          rotationY: rand() * Math.PI * 2,
+          levelFrac: t,
+          burial: 0,
+        });
+      }
     });
+  }
+
+  // Crevice shading, baked per-instance rather than computed from real-time
+  // per-pixel neighbour lookups (this is mesh instancing, not a raymarched
+  // field — no shading-time access to "what's nearby"): for each puff, sum
+  // how much its neighbours' spheres overlap into its own, as a stand-in for
+  // "how tucked into a crevice is this puff." Puffs that stick out with few
+  // close neighbours stay fully exposed; puffs nestled among several others
+  // (exactly where the reference image's blue-grey notches sit) come out
+  // heavily buried. O(n²) over ~20-40 puffs, build-time only.
+  for (const puff of puffs) {
+    let overlap = 0;
+    for (const other of puffs) {
+      if (other === puff) continue;
+      const d = puff.position.distanceTo(other.position);
+      const combined = puff.scale + other.scale;
+      if (d < combined) overlap += (combined - d) / puff.scale;
+    }
+    puff.burial = THREE.MathUtils.clamp(overlap * 0.14, 0, 1);
   }
 
   return puffs;
@@ -171,6 +208,7 @@ export function createCloudCluster(
     scale: s.scale,
     rotationY: s.rotationY,
     levelFrac: s.levelFrac,
+    burial: s.burial,
   }));
 
   const group = new THREE.Group();
@@ -181,6 +219,21 @@ export function createCloudCluster(
   const haloMesh = new THREE.InstancedMesh(haloGeom, materials.halo, nodules.length);
   haloMesh.renderOrder = 1;
   group.add(coreMesh, haloMesh);
+
+  // Crevice tint as a per-instance colour multiplier (three.js's
+  // InstancedMesh.instanceColor, multiplied against the geometry's own baked
+  // vertex-colour gradient automatically) — narrow range and blue-shifted,
+  // per the reference-image analysis: the dark notches between lobes are
+  // subtle (roughly 15-25% darker, not a black pit) and shift toward blue
+  // rather than just losing brightness neutrally.
+  const instanceColors = new Float32Array(nodules.length * 3);
+  for (let i = 0; i < nodules.length; i++) {
+    const b = nodules[i].burial;
+    instanceColors[i * 3] = THREE.MathUtils.lerp(1.0, 0.82, b);
+    instanceColors[i * 3 + 1] = THREE.MathUtils.lerp(1.0, 0.87, b);
+    instanceColors[i * 3 + 2] = THREE.MathUtils.lerp(1.0, 0.98, b);
+  }
+  coreMesh.instanceColor = new THREE.InstancedBufferAttribute(instanceColors, 3);
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
