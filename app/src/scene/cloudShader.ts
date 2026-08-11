@@ -84,10 +84,35 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // the key light.
       uWeightLight: { value: 0.6 },
       uWeightHeight: { value: 0.4 },
+      // Multiple-scattering floor: the light term is remapped into
+      // [uAmbient, 1] rather than being allowed to reach zero.
+      //
+      // This is what was missing once the key light was swung behind the cloud
+      // to get lateral modelling. With the source beyond the mass, the whole
+      // camera-facing hemisphere sits on the shadow side, so the light term
+      // collapsed — and with it the entire shading term. Tracing the terms for
+      // a typical visible fragment gave s ≈ 0.02 before the contrast stage,
+      // where the design intends ≈ 0.5, and the measurement agrees: the
+      // render's tower had 54.5% of its area below luminance 205 and a median
+      // of 204, against the reference's 20.4% and 230. Inverting the ramp,
+      // that median is s = 0.11 where the reference's is s = 0.69, and over a
+      // quarter of the mass was pinned at s = 0 — which is the vivid blue at
+      // the ramp's bottom entry showing through as "holes to the sky".
+      //
+      // A floor is the physically right correction rather than a bias hack: a
+      // cumulus is optically thick and multiply-scattering, so its shadow side
+      // is not dark but merely less bright. The reference bears that out — its
+      // darkest tower pixel is 177 against a white of 255, a range of well
+      // under a third.
+      uAmbient: { value: 0.45 },
       // How far a puff nestled among neighbours is pushed down the ramp.
-      // Measured target: ~48% of the reference's cloud interior sits below
-      // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.20 },
+      // Was 0.20, for a measured target of "~48% of the reference's cloud
+      // interior below luminance 205". That figure came from the *previous*
+      // reference image (1786418841252.png, deleted on main); re-measured on
+      // the current one (1786443741198.png) the same statistic is 20.4%, so
+      // the old value was pushing the mass down to meet a target that no
+      // longer exists.
+      uOcclusion: { value: 0.12 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
@@ -114,15 +139,23 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // solid object's shadow. The 5x5 taps are spread over ~40 texels so the
       // result is a soft partial occlusion at cloud-mass scale.
       uShadowRadius: { value: 1.6 },
-      uShadowStrength: { value: 0.22 },
+      // 0.22 -> 0.15, same stale-target correction as uOcclusion above.
+      uShadowStrength: { value: 0.15 },
       uMacroScale: { value: 0.16 },
       uMacroAmount: { value: 0.3 },
       // Now in cluster-local km (see the wash term in the fragment shader).
       // 0.22 puts the hero tower's 4.3km half-width at about 0.78 of the
       // clamp, so the mass uses most of the available ramp without flattening
       // against it, and the small cumulus scale down in proportion.
-      uWashScale: { value: 0.22 },
-      uWashAmount: { value: 0.62 },
+      // 0.22 -> 0.14 and 0.62 -> 0.34. At 0.22 the dot product saturated the
+      // clamp over roughly a fifth of the tower, so across that fifth the wash
+      // carried *no* gradient at all — the term was simultaneously too strong
+      // (a flat -0.62 offset on the camera-facing side, which is the shadow
+      // side now that the key light sits beyond the mass) and too weak (no
+      // modelling where it clipped). Scaling so the tower's own extent stays
+      // inside the clamp keeps the gradient linear across the whole mass.
+      uWashScale: { value: 0.14 },
+      uWashAmount: { value: 0.34 },
       uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
       uHighlightKnee: { value: 0.82 },
@@ -173,7 +206,12 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.13 },
+      // -0.13 -> -0.35 (the term is subtracted, so this *raises* s). Sized from
+      // the ramp inversion rather than by eye: the reference tower's median
+      // luminance of 230 corresponds to s = 0.688 and the render's 204 to
+      // s = 0.11, and the ambient floor and the relaxed occlusion/shadow/wash
+      // terms above account for about 0.35 of that 0.58 gap between them.
+      uBias: { value: -0.35 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -224,6 +262,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform vec3 uLightDir;
       uniform float uWeightLight;
       uniform float uWeightHeight;
+      uniform float uAmbient;
       uniform float uOcclusion;
       uniform float uNoiseAmount;
       uniform float uNoiseScale;
@@ -290,6 +329,12 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // in a smoothstep tightens each lobe's terminator so its outline reads
         // against whatever sits behind it.
         float lightTerm = mix(wrapped, smoothstep(0.32, 0.78, wrapped), uTerminator);
+        // Multiple-scattering floor (see uAmbient). Remapping into
+        // [uAmbient, 1] rather than adding a constant keeps the term's
+        // gradient — the shape reads exactly as before, it simply no longer
+        // bottoms out, which is what pinned a quarter of the mass to the
+        // ramp's bottom entry once the key light moved behind the cloud.
+        lightTerm = mix(uAmbient, 1.0, lightTerm);
 
         float heightTerm = vHeight * 0.5 + 0.5;
 
