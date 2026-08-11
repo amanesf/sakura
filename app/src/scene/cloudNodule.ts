@@ -2,74 +2,55 @@ import * as THREE from 'three';
 import { fbm3 } from '../core/buildNoise';
 
 /**
- * One "puff" of cloud: a noise-displaced low-poly sphere with a baked
- * top-bright/underside-dark-and-cool vertex-color gradient — the technique
- * proven out in amanesf/planet-canvas2's src/clouds.ts (see that file's own
- * commentary, including an explicit "新海誠的な" note on the rim-light/
- * underside-bounce additions layered on top in scene/clouds.ts here).
+ * One "puff" of cloud: a noise-displaced sphere carrying a normalised local
+ * height attribute. The technique is from amanesf/planet-canvas2's
+ * src/clouds.ts (a prior project explicitly tuned for "新海誠的な" quality),
+ * but the *shading* has since diverged from it: that project baked a
+ * top-bright/underside-dark vertex-colour gradient and multiplied it by
+ * standard PBR lighting, and measuring the result against the reference image
+ * showed why that can't reach the target — see cloudRamp.ts. Multiplying an
+ * albedo by a neutral N.L term slides toward grey, whereas the reference's
+ * shadows get *bluer* as they get darker.
  *
- * The gradient is baked, not computed per-frame: lighting every nodule as an
- * isolated ball (pure PBR against a directional light) makes a cluster of them
- * read as "a heap of separately-lit spheres with nothing darker where they
- * meet" — flat, however lumpy the outline is. A fixed vertical gradient does
- * the job a real shadow map can't at this scale, for free.
+ * So the gradient is no longer baked as colour. It is baked as a scalar
+ * (aHeight, -1 at the underside to +1 at the crown) and becomes one input to
+ * the shading term that indexes the measured colour ramp in clouds.ts. The
+ * reason for baking it at all is unchanged: lighting every nodule as an
+ * isolated ball makes a cluster read as "a heap of separately-lit spheres
+ * with nothing darker where they meet", however lumpy the outline is.
  */
-export function buildNoduleGeometry(
-  seed: number,
-  flatten: number,
-  undersideFloor: number,
-  skyTint: THREE.Color = new THREE.Color(0.55, 0.7, 1.0),
-): THREE.BufferGeometry {
+export function buildNoduleGeometry(seed: number, flatten: number): THREE.BufferGeometry {
   // Higher-poly than planet-canvas2's 12x5: that project viewed nodules from
   // orbital distance where a coarse silhouette was invisible; our camera sits
   // much closer (plan.md's fixed "bench" framing), so the same low-poly count
-  // read as faceted rock rather than soft cauliflower. Two displacement
-  // octaves — a coarse one for a few big lobes, a fine one riding on top for
-  // the actual cauliflower bumpiness — instead of one octave at a single
-  // frequency, which is what was producing a uniformly "rocky" surface.
+  // read as faceted rock rather than soft cauliflower. Three displacement
+  // octaves — a coarse one for a few big lobes, and two finer ones riding on
+  // top for the actual cauliflower bumpiness.
   const geometry = new THREE.SphereGeometry(1, 32, 18);
   const position = geometry.attributes.position;
   const v = new THREE.Vector3();
   for (let i = 0; i < position.count; i++) {
     v.fromBufferAttribute(position, i);
-    const len = v.length();
-    if (len < 1e-6) continue;
+    if (v.length() < 1e-6) continue;
     // A high-amplitude *low*-frequency octave is what reads as faceted rock —
     // at low frequency there just aren't enough vertices per bump for the
     // smoothing to hide the facets, no matter how high-poly the base sphere
-    // is. Softened (lower amplitude, one more octave so the remaining bumps
-    // are smaller/rounder) and leaned on the higher-resolution base mesh
-    // instead to carry the silhouette detail.
+    // is. Kept low-amplitude and leaned on the extra octaves instead.
     const coarse = fbm3(v.x * 1.7, v.y * 1.7, v.z * 1.7, seed, 3);
     const fine = fbm3(v.x * 4.6, v.y * 4.6, v.z * 4.6, seed + 91.0, 3);
-    v.multiplyScalar(1 + coarse * 0.26 + fine * 0.11);
+    const micro = fbm3(v.x * 9.1, v.y * 9.1, v.z * 9.1, seed + 613.0, 2);
+    v.multiplyScalar(1 + coarse * 0.26 + fine * 0.11 + micro * 0.045);
     position.setXYZ(i, v.x, v.y, v.z);
   }
-  geometry.scale(1, 0.72 * flatten, 1);
+  geometry.scale(1, 0.88 * flatten, 1);
   geometry.computeVertexNormals();
 
-  // Shadow color mixes in the *actual* sky color (skyTint, passed down from
-  // main.ts's atmosphere-derived ambient) rather than darkening toward black/
-  // grey or a hand-picked blue — a shaded cloud underside is lit by scattered
-  // skylight, so its color should visibly be "made of" the sky it's under.
-  const colors = new Float32Array(position.count * 3);
-  const halfHeight = 0.72 * flatten;
-  const white = new THREE.Color(1, 1, 1);
-  const shadeColor = new THREE.Color();
+  const halfHeight = 0.88 * flatten;
+  const heights = new Float32Array(position.count);
   for (let i = 0; i < position.count; i++) {
-    const t = THREE.MathUtils.clamp(position.getY(i) / halfHeight, -1, 1);
-    // undersideFloor still controls how far down the white->sky-tint blend
-    // reaches (a higher floor = the shadow tint only shows very close to the
-    // true underside), by biasing the blend curve rather than changing the
-    // colors being blended between.
-    const litRaw = t * 0.5 + 0.5;
-    const lit = THREE.MathUtils.clamp(THREE.MathUtils.mapLinear(litRaw, 1 - (1 - undersideFloor) * 2, 1, 0, 1), 0, 1);
-    shadeColor.copy(skyTint).lerp(white, lit);
-    colors[i * 3] = shadeColor.r;
-    colors[i * 3 + 1] = shadeColor.g;
-    colors[i * 3 + 2] = shadeColor.b;
+    heights[i] = THREE.MathUtils.clamp(position.getY(i) / halfHeight, -1, 1);
   }
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute('aHeight', new THREE.BufferAttribute(heights, 1));
   return geometry;
 }
 
@@ -86,15 +67,12 @@ export function buildHaloGeometry(seed: number, flatten: number): THREE.BufferGe
   const v = new THREE.Vector3();
   for (let i = 0; i < position.count; i++) {
     v.fromBufferAttribute(position, i);
-    const len = v.length();
-    if (len < 1e-6) continue;
+    if (v.length() < 1e-6) continue;
     const n = fbm3(v.x * 1.2, v.y * 1.2, v.z * 1.2, seed + 331.0, 2);
     v.multiplyScalar(1 + n * 0.12);
     position.setXYZ(i, v.x, v.y, v.z);
   }
-  geometry.scale(1, 0.72 * flatten, 1);
+  geometry.scale(1, 0.88 * flatten, 1);
   geometry.computeVertexNormals();
-  const colors = new Float32Array(position.count * 3).fill(0.97);
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   return geometry;
 }

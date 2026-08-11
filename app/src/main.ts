@@ -32,16 +32,10 @@ const sunDir = sunDirection(TIME_OF_DAY_T);
 // the distance ("左手前から右奥方向へ") rather than straight down from above.
 const CLOUD_LIGHT_DIR = new THREE.Vector3(-0.55, 0.7, 0.55).normalize();
 
-// The color a shaded cloud crevice should read as — actual sky color, not a
-// hand-picked blue or a neutral darkening toward black/grey (「影は黒っぽく
-// するんじゃなくて空の色を混ぜて」). Matches sky.ts's zenith tone.
-const SKY_TINT = new THREE.Color(0.4, 0.62, 0.95);
-
-const sun = new THREE.DirectionalLight('#fff6e8', 3.2);
-sun.position.copy(CLOUD_LIGHT_DIR).multiplyScalar(50);
-scene.add(sun);
-const hemi = new THREE.HemisphereLight(SKY_TINT, '#3a4a3f', 0.9);
-scene.add(hemi);
+// No THREE.Light in the scene any more: the cloud material is unlit and
+// indexes a colour ramp measured out of the reference image (cloudRamp.ts),
+// and sky.ts is its own atmospheric-scattering shader. Adding a
+// DirectionalLight/HemisphereLight here would do nothing but cost uniforms.
 
 const materials = createCloudMaterials(CLOUD_LIGHT_DIR);
 
@@ -63,8 +57,8 @@ const CLOUD_BASE_ALT = 1.4;
 // core/camera.ts for how TOWER_CENTER was solved from the reference image's
 // measured screen position).
 const TOWER_CENTER = new THREE.Vector2(5.5, -16.0);
-const TOWER_TOP_ALT = 11.0;
-const TOWER_RADIUS = 2.4;
+const TOWER_TOP_ALT = 9.6;
+const TOWER_RADIUS = 4.0;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
   const bump = Math.max(0, 1 - Math.abs(t * 2 - 0.7) ** 1.3);
@@ -96,7 +90,7 @@ function addCluster(
   cycleSeconds: number,
   windScale = 1,
 ): void {
-  const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials, SKY_TINT);
+  const handle = createCloudCluster(seed, center, CLOUD_BASE_ALT, topAltFull, levels, radiusProfile, puffsPerLevel, materials, CLOUD_LIGHT_DIR);
   scene.add(handle.group);
   clusters.push({
     handle,
@@ -119,7 +113,7 @@ function addCluster(
 // against the reference image's measured screen coordinates, see camera.ts) —
 // letting it drift on the same wind budget as decorative background cumulus
 // carried it out of frame within seconds. It still sways, just gently.
-addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 12, 6, TOWER_CYCLE_SECONDS, 0.05);
+addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 18, 16, TOWER_CYCLE_SECONDS, 0.05);
 
 // A handful of smaller cumulus scattered around the tower for variety
 // (plan.md: 「雲は入道雲だけじゃないしさ」) — deterministic seeded positions,
@@ -134,7 +128,7 @@ const SMALL_CUMULUS = [
 ];
 for (const c of SMALL_CUMULUS) {
   const radiusProfile = (t: number) => c.radius * THREE.MathUtils.lerp(0.7, 1.0, Math.sin(t * Math.PI));
-  addCluster(c.seed, new THREE.Vector2(c.x, c.z), c.top, radiusProfile, 2, 3, TOWER_CYCLE_SECONDS * 1.4);
+  addCluster(c.seed, new THREE.Vector2(c.x, c.z), c.top, radiusProfile, 4, 6, TOWER_CYCLE_SECONDS * 1.4);
 }
 
 const clock = new THREE.Clock();

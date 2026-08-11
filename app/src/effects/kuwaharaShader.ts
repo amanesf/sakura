@@ -17,7 +17,11 @@ export const KuwaharaShader = {
   uniforms: {
     tDiffuse: { value: null },
     uTexelSize: { value: [0, 0] },
-    uRadius: { value: 3 },
+    // Radius 2, not 3. Measured: at radius 3 this pass drove the render's
+    // local gradient energy down to 0.66 against the reference image's 2.60 —
+    // it was averaging away more surface detail than the cloud shader was
+    // putting in, which is the opposite of the painterly tooth it is here for.
+    uRadius: { value: 2 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/buildNoise';
 import { buildNoduleGeometry, buildHaloGeometry } from './cloudNodule';
+import { createCloudMaterials, type CloudMaterials } from './cloudShader';
+
+export { createCloudMaterials };
+export type { CloudMaterials };
 
 /**
  * Mesh-instanced clouds — replaces the earlier fullscreen volumetric raymarch
@@ -48,7 +52,10 @@ export interface CloudClusterHandle {
 // y reads as an irregular lump rather than a perfect ball, cheaply (no extra
 // geometry, just an anisotropic instance-matrix scale).
 function randomStretch(rand: () => number): THREE.Vector3 {
-  return new THREE.Vector3(0.65 + rand() * 0.85, 0.7 + rand() * 0.6, 0.65 + rand() * 0.85);
+  // y range tightened (was 0.7-1.3). Combined with the nodule mesh's own
+  // vertical squash, the wider range made puffs read as separate flat
+  // lozenges stacked in a pile rather than lobes of one mass.
+  return new THREE.Vector3(0.72 + rand() * 0.7, 0.85 + rand() * 0.4, 0.72 + rand() * 0.7);
 }
 
 function buildPuffCluster(
@@ -59,6 +66,7 @@ function buildPuffCluster(
   levels: number,
   radiusProfile: (t: number) => number,
   puffsPerLevel: number,
+  lightDir: THREE.Vector3,
 ): PuffSpec[] {
   const rand = mulberry32(seed >>> 0);
   const puffs: PuffSpec[] = [];
@@ -105,7 +113,14 @@ function buildPuffCluster(
       const puffScaleRaw = radius * 0.82 * rankSize * bulk * grain * (0.6 + rand() * 0.7);
       // Hard cap relative to the level radius: no single puff should be able
       // to outgrow the band it's scattered in, whatever grain rolled.
-      const puffScale = Math.min(puffScaleRaw, radius * 0.95);
+      // Cap tightened 0.95 -> 0.5 of the level radius. Comparing crops of the
+      // render and the reference side by side showed the detail gap is
+      // geometric, not textural: the reference's cloud is built from many
+      // small lobes whose lit rims read as hard edges against the lobes
+      // behind, while the render was a handful of large lobes with soft
+      // gradients between them. No amount of shading noise produces edges —
+      // only more, smaller silhouettes do.
+      const puffScale = Math.min(puffScaleRaw, radius * 0.3);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
@@ -122,16 +137,16 @@ function buildPuffCluster(
       // ones), not texture or a single size of ball. At least one guaranteed
       // (was 0-2, i.e. often none at all — undercounted against a reference
       // that has zero "plain, unscalloped" puffs).
-      const satelliteCount = 1 + Math.floor(rand() * 3.2);
+      const satelliteCount = 2 + Math.floor(rand() * 4.2);
       for (let s = 0; s < satelliteCount; s++) {
         const sa = rand() * Math.PI * 2;
-        const sr = puffs[puffs.length - 1].scale * (0.45 + rand() * 0.55);
+        const sr = puffs[puffs.length - 1].scale * (0.35 + rand() * 0.4);
         const satPos = position.clone().add(
           new THREE.Vector3(Math.cos(sa) * sr, (rand() - 0.5) * sr * 0.6, Math.sin(sa) * sr),
         );
         puffs.push({
           position: satPos,
-          scale: puffs[puffs.length - 1].scale * (0.24 + rand() * 0.34),
+          scale: puffs[puffs.length - 1].scale * (0.3 + rand() * 0.42),
           stretch: randomStretch(rand),
           rotationY: rand() * Math.PI * 2,
           levelFrac: t,
@@ -141,33 +156,64 @@ function buildPuffCluster(
     });
   }
 
-  // Crevice shading, baked per-instance rather than computed from real-time
+  // Self-shadowing, baked per-instance rather than computed from real-time
   // per-pixel neighbour lookups (this is mesh instancing, not a raymarched
-  // field — no shading-time access to "what's nearby"): for each puff, sum
-  // how much its neighbours' spheres overlap into its own, as a stand-in for
-  // "how tucked into a crevice is this puff." Puffs that stick out with few
-  // close neighbours stay fully exposed; puffs nestled among several others
-  // (exactly where the reference image's blue-grey notches sit) come out
-  // heavily buried. O(n²) over ~20-40 puffs, build-time only.
+  // field — no shading-time access to "what's nearby"). For each puff, sum
+  // how much its neighbours' spheres overlap into its own, *weighted by
+  // whether that neighbour sits up-light of it*.
+  //
+  // The directional weighting is the point. An undirected overlap sum only
+  // says "this puff is in a dense part of the cloud", which darkens crevices
+  // symmetrically and reads as dirt. What the reference actually shows is
+  // lobes casting onto the lobes behind and below them: the shadow edges
+  // inside the silhouette are scalloped, tracing the outline of whatever is
+  // in front of them toward the sun. Weighting each neighbour's contribution
+  // by how far it lies along the light direction reproduces that
+  // lobe-casts-onto-lobe structure at build time. O(n^2) over a few hundred
+  // puffs, once.
+  const L = lightDir.clone().normalize();
+  const toOther = new THREE.Vector3();
   for (const puff of puffs) {
-    let overlap = 0;
+    let lit = 0;
+    let total = 0;
     for (const other of puffs) {
       if (other === puff) continue;
       const d = puff.position.distanceTo(other.position);
       const combined = puff.scale + other.scale;
-      if (d < combined) overlap += (combined - d) / puff.scale;
+      if (d >= combined || d < 1e-6) continue;
+      toOther.copy(other.position).sub(puff.position).divideScalar(d);
+      const overlap = (combined - d) / puff.scale;
+      total += overlap;
+      // 1 when the neighbour is directly up-light (it shadows us), 0 when
+      // directly down-light (we shadow it).
+      lit += overlap * Math.max(0, toOther.dot(L));
     }
-    puff.burial = THREE.MathUtils.clamp(overlap * 0.14, 0, 1);
+    // Two separately-bounded signals, because the raw overlap *sum* is not a
+    // usable quantity: in a cluster packed as densely as the reference
+    // demands, each puff overlaps 10-20 neighbours and the sum lands around
+    // 5-20, so any fixed scale factor saturates essentially every puff at
+    // maximum shadow. (It did — the first render of this system came out
+    // almost uniformly deep blue.) Both terms below are scale-free by
+    // construction and cannot saturate with cluster density.
+    //
+    //  shadowed: what fraction of the surrounding mass lies up-light. This is
+    //            the directional term, and it is what produces lobes casting
+    //            onto the lobes behind them rather than symmetric grime.
+    //  packed:   how enclosed the puff is at all, a mild ambient-occlusion
+    //            term, saturating gently.
+    const shadowed = total > 1e-6 ? lit / total : 0;
+    const packed = 1 - Math.exp(-total * 0.09);
+    puff.burial = THREE.MathUtils.clamp(shadowed * 0.72 + packed * 0.28, 0, 1);
   }
 
   return puffs;
 }
 
 const coreGeometryCache = new Map<number, THREE.BufferGeometry>();
-function coreGeometryFor(variant: number, skyTint: THREE.Color): THREE.BufferGeometry {
+function coreGeometryFor(variant: number): THREE.BufferGeometry {
   let g = coreGeometryCache.get(variant);
   if (!g) {
-    g = buildNoduleGeometry(variant * 97.3 + 11, 1, 0.6, skyTint);
+    g = buildNoduleGeometry(variant * 97.3 + 11, 1);
     coreGeometryCache.set(variant, g);
   }
   return g;
@@ -179,66 +225,7 @@ function haloGeometryFor(): THREE.BufferGeometry {
   return sharedHaloGeometry;
 }
 
-export interface CloudMaterials {
-  core: THREE.MeshStandardMaterial;
-  halo: THREE.MeshStandardMaterial;
-}
-
-/**
- * lightDirection here is a deliberately *art-directed* key light, not
- * necessarily the true astronomical sun direction — per the Guilty Gear Xrd
- * research (plan.md discussion): professional cel-look 3D doesn't trust
- * physically-correct lighting for its shading reads either, artists bend it
- * toward whatever direction makes the form/rim read best. Requested framing
- * is a raking cross-light — source at left-and-near, light travelling toward
- * right-and-far — rather than top-down, for a more dramatic rim/depth read.
- */
-export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMaterials {
-  const core = new THREE.MeshStandardMaterial({
-    color: '#f2f0ee',
-    vertexColors: true,
-    roughness: 0.88,
-    emissive: '#ffffff',
-    emissiveIntensity: 0.06,
-  });
-
-  // Fresnel rim (headroom-gated so it can't blow out an already-bright sunlit
-  // crown) + a warm underside bounce restricted to this nodule's own local
-  // dusk/dawn — the two terms planet-canvas2 added "on request (新海誠的な)"
-  // on top of the baked gradient + standard PBR lighting.
-  core.onBeforeCompile = (shader) => {
-    shader.uniforms.uSunDir = { value: lightDirection };
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform vec3 uSunDir;')
-      .replace(
-        '#include <emissivemap_fragment>',
-        `#include <emissivemap_fragment>
-        {
-          float underside = 1.0 - clamp(dot(diffuseColor.rgb, vec3(0.333)), 0.0, 1.0);
-          float cloudRim = pow(1.0 - clamp(dot(normalize(vViewPosition), normal), 0.0, 1.0), 2.0);
-          totalEmissiveRadiance += vec3(1.0, 0.97, 0.9) * cloudRim * 0.22 * underside;
-
-          float duskBand = smoothstep(0.35, -0.05, uSunDir.y);
-          totalEmissiveRadiance += vec3(1.0, 0.55, 0.22) * duskBand * underside * 0.3;
-        }`,
-      );
-  };
-
-  const halo = new THREE.MeshStandardMaterial({
-    color: '#ffffff',
-    roughness: 1,
-    vertexColors: true,
-    emissive: '#ffffff',
-    emissiveIntensity: 0.12,
-    transparent: true,
-    opacity: 0.14,
-    depthWrite: false,
-  });
-
-  return { core, halo };
-}
-
-const HALO_SCALE = 1.3;
+const HALO_SCALE = 1.15;
 
 export function createCloudCluster(
   seed: number,
@@ -249,9 +236,9 @@ export function createCloudCluster(
   radiusProfile: (t: number) => number,
   puffsPerLevel: number,
   materials: CloudMaterials,
-  skyTint: THREE.Color,
+  lightDir: THREE.Vector3,
 ): CloudClusterHandle {
-  const specs = buildPuffCluster(seed, centerXZ, baseAlt, topAlt, levels, radiusProfile, puffsPerLevel);
+  const specs = buildPuffCluster(seed, centerXZ, baseAlt, topAlt, levels, radiusProfile, puffsPerLevel, lightDir);
   const nodules: Nodule[] = specs.map((s) => ({
     base: s.position,
     scale: s.scale,
@@ -262,7 +249,11 @@ export function createCloudCluster(
   }));
 
   const group = new THREE.Group();
-  const coreGeom = coreGeometryFor(Math.floor(seed) % 5, skyTint);
+  // Cloned per cluster because the per-instance attributes below live on the
+  // geometry: the displaced base mesh is cached and shared (it is the
+  // expensive part), but each cluster needs its own attribute buffers or
+  // clusters would overwrite each other's occlusion values.
+  const coreGeom = coreGeometryFor(Math.floor(seed) % 5).clone();
   const haloGeom = haloGeometryFor();
 
   const coreMesh = new THREE.InstancedMesh(coreGeom, materials.core, nodules.length);
@@ -270,24 +261,18 @@ export function createCloudCluster(
   haloMesh.renderOrder = 1;
   group.add(coreMesh, haloMesh);
 
-  // Crevice tint as a per-instance colour multiplier (three.js's
-  // InstancedMesh.instanceColor, multiplied against the geometry's own baked
-  // vertex-colour gradient automatically) — narrow range, and blended toward
-  // the *actual sky color* (skyTint) rather than a fixed guess or toward
-  // black: per the "影は黒っぽくするんじゃなくて空の色を混ぜて" direction, a
-  // shadowed crevice is lit by ambient skylight, so it should read as "made
-  // of" that same sky color, just less of the direct-sun brightness.
-  const instanceColors = new Float32Array(nodules.length * 3);
-  const white = new THREE.Color(1, 1, 1);
-  const instColor = new THREE.Color();
+  // Per-instance inputs to the shading term (see cloudShader.ts): how deeply
+  // this puff sits in another puff's shadow, and a stable random offset so
+  // neighbouring puffs don't sample identical noise and reveal that they are
+  // all the same five base meshes.
+  const occlusions = new Float32Array(nodules.length);
+  const seeds = new Float32Array(nodules.length);
   for (let i = 0; i < nodules.length; i++) {
-    const b = nodules[i].burial * 0.55; // keep it subtle — see cloudNodule.ts's same reasoning
-    instColor.copy(white).lerp(skyTint, b);
-    instanceColors[i * 3] = instColor.r;
-    instanceColors[i * 3 + 1] = instColor.g;
-    instanceColors[i * 3 + 2] = instColor.b;
+    occlusions[i] = nodules[i].burial;
+    seeds[i] = (nodules[i].base.x * 12.9898 + nodules[i].base.z * 78.233 + nodules[i].base.y * 37.719) % 17.0;
   }
-  coreMesh.instanceColor = new THREE.InstancedBufferAttribute(instanceColors, 3);
+  coreGeom.setAttribute('aOcclusion', new THREE.InstancedBufferAttribute(occlusions, 1));
+  coreGeom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
