@@ -85,14 +85,47 @@ function buildPuffCluster(
     const radius = radiusProfile(t);
 
     const count = puffsPerLevel + Math.floor(rand() * 2);
-    const centers: { x: number; z: number }[] = [];
-    for (let i = 0; i < count; i++) {
-      const a = rand() * Math.PI * 2;
-      const r = Math.pow(rand(), 0.6) * radius;
-      centers.push({ x: Math.cos(a) * r, z: Math.sin(a) * r });
+    // Hierarchical clumping, not a uniform disc scatter. A uniform scatter
+    // spreads puffs evenly, and evenly-spread same-ish spheres read as
+    // broccoli — a regular bobbly crust with sky showing between the bobbles.
+    // Real cumulus (and the reference) is lumpy at two scales: a handful of
+    // big structural masses per level, each carrying its own crowd of smaller
+    // lobes. Scattering around a few clump centres instead reproduces that,
+    // and the irregular gaps between clumps are what stop the outline reading
+    // as a circle of beads.
+    const clumpCount = 2 + Math.floor(rand() * 3);
+    const clumps: { x: number; z: number; spread: number; weight: number }[] = [];
+    for (let k = 0; k < clumpCount; k++) {
+      const ca = rand() * Math.PI * 2;
+      const cr = Math.pow(rand(), 0.55) * radius * 0.75;
+      clumps.push({
+        x: Math.cos(ca) * cr,
+        z: Math.sin(ca) * cr,
+        spread: radius * (0.22 + rand() * 0.3),
+        // Uneven weights so one clump dominates the level rather than all
+        // clumps coming out the same size — the "big lobe with satellites"
+        // hierarchy rather than several equal blobs.
+        weight: 0.35 + rand() * 1.3,
+      });
     }
-    centers[0].x *= 0.2;
-    centers[0].z *= 0.2;
+    const totalWeight = clumps.reduce((acc, c) => acc + c.weight, 0);
+
+    const centers: { x: number; z: number; clumpWeight: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      // Pick a clump proportionally to its weight, then scatter tightly
+      // around it.
+      let pick = rand() * totalWeight;
+      let clump = clumps[clumps.length - 1];
+      for (const c of clumps) {
+        pick -= c.weight;
+        if (pick <= 0) { clump = c; break; }
+      }
+      const a = rand() * Math.PI * 2;
+      const r = Math.pow(rand(), 0.5) * clump.spread;
+      centers.push({ x: clump.x + Math.cos(a) * r, z: clump.z + Math.sin(a) * r, clumpWeight: clump.weight });
+    }
+    centers[0].x *= 0.25;
+    centers[0].z *= 0.25;
     centers.sort((a, b) => a.x * a.x + a.z * a.z - (b.x * b.x + b.z * b.z));
 
     centers.forEach((c, i) => {
@@ -105,7 +138,7 @@ function buildPuffCluster(
       // that could spike a single puff to ~3.6x — one puff that large
       // swallows an entire level's worth of neighbours into one smooth
       // sphere, which is the opposite of "小さく複雑な塊".
-      const grain = 0.45 + Math.pow(rand(), 2.2) * 1.55;
+      const grain = (0.45 + Math.pow(rand(), 2.2) * 1.55) * (0.6 + c.clumpWeight * 0.5);
       // 0.62→0.82: the reference has essentially no sky visible between
       // lobes within the body of the cloud — puffs need to overlap generously,
       // not just touch, or gaps show through as translucent halo instead of
@@ -158,52 +191,57 @@ function buildPuffCluster(
 
   // Self-shadowing, baked per-instance rather than computed from real-time
   // per-pixel neighbour lookups (this is mesh instancing, not a raymarched
-  // field — no shading-time access to "what's nearby"). For each puff, sum
-  // how much its neighbours' spheres overlap into its own, *weighted by
-  // whether that neighbour sits up-light of it*.
+  // field — no shading-time access to "what's nearby").
   //
-  // The directional weighting is the point. An undirected overlap sum only
-  // says "this puff is in a dense part of the cloud", which darkens crevices
-  // symmetrically and reads as dirt. What the reference actually shows is
-  // lobes casting onto the lobes behind and below them: the shadow edges
-  // inside the silhouette are scalloped, tracing the outline of whatever is
-  // in front of them toward the sun. Weighting each neighbour's contribution
-  // by how far it lies along the light direction reproduces that
-  // lobe-casts-onto-lobe structure at build time. O(n^2) over a few hundred
-  // puffs, once.
+  // The main term is a genuine optical depth toward the light: from each
+  // puff's centre, shoot a ray along the light direction and accumulate the
+  // chord it cuts through every other puff's sphere, then convert to a
+  // transmittance by Beer-Lambert. This replaces an earlier heuristic that
+  // only scored *local* neighbour overlap, which could not produce what the
+  // measurement said was missing — the reference's deepest shadows reach
+  // luminance 148 and a blue/red separation of 149, where the heuristic
+  // version bottomed out at 173/100. Local overlap is bounded by how many
+  // neighbours touch one puff, so it cannot distinguish "on the shaded side
+  // of the cloud" from "buried one lobe deep"; only integrating along the
+  // light ray gives the large contiguous dark regions that produce the deep
+  // end of the reference's tonal range.
   const L = lightDir.clone().normalize();
-  const toOther = new THREE.Vector3();
+  const oc = new THREE.Vector3();
   for (const puff of puffs) {
-    let lit = 0;
-    let total = 0;
+    let tau = 0;
+    let localOverlap = 0;
     for (const other of puffs) {
       if (other === puff) continue;
-      const d = puff.position.distanceTo(other.position);
+      oc.copy(other.position).sub(puff.position);
+      const along = oc.dot(L);
+      const distSq = oc.lengthSq();
+
+      if (along > 0) {
+        // Ray-sphere: perpendicular miss distance from the light ray to this
+        // occluder's centre.
+        const perpSq = distSq - along * along;
+        const rSq = other.scale * other.scale;
+        if (perpSq < rSq) {
+          // Chord length normalised by the occluder's own radius, so a big
+          // and a small puff contribute in proportion to how much of the ray
+          // they actually fill rather than to their absolute size. The
+          // exponential falloff with distance softens shadows cast from far
+          // up-light, standing in for the penumbra of an extended source.
+          const chord = 2 * Math.sqrt(rSq - perpSq);
+          tau += (chord / other.scale) * Math.exp(-along * 0.12);
+        }
+      }
+
+      // Secondary, undirected term: plain crevice ambient occlusion, kept
+      // because a puff wedged among neighbours is darker even on its lit side.
+      const d = Math.sqrt(distSq);
       const combined = puff.scale + other.scale;
-      if (d >= combined || d < 1e-6) continue;
-      toOther.copy(other.position).sub(puff.position).divideScalar(d);
-      const overlap = (combined - d) / puff.scale;
-      total += overlap;
-      // 1 when the neighbour is directly up-light (it shadows us), 0 when
-      // directly down-light (we shadow it).
-      lit += overlap * Math.max(0, toOther.dot(L));
+      if (d < combined && d > 1e-6) localOverlap += (combined - d) / puff.scale;
     }
-    // Two separately-bounded signals, because the raw overlap *sum* is not a
-    // usable quantity: in a cluster packed as densely as the reference
-    // demands, each puff overlaps 10-20 neighbours and the sum lands around
-    // 5-20, so any fixed scale factor saturates essentially every puff at
-    // maximum shadow. (It did — the first render of this system came out
-    // almost uniformly deep blue.) Both terms below are scale-free by
-    // construction and cannot saturate with cluster density.
-    //
-    //  shadowed: what fraction of the surrounding mass lies up-light. This is
-    //            the directional term, and it is what produces lobes casting
-    //            onto the lobes behind them rather than symmetric grime.
-    //  packed:   how enclosed the puff is at all, a mild ambient-occlusion
-    //            term, saturating gently.
-    const shadowed = total > 1e-6 ? lit / total : 0;
-    const packed = 1 - Math.exp(-total * 0.09);
-    puff.burial = THREE.MathUtils.clamp(shadowed * 0.72 + packed * 0.28, 0, 1);
+
+    const cast = 1 - Math.exp(-tau * 0.105);
+    const packed = 1 - Math.exp(-localOverlap * 0.09);
+    puff.burial = THREE.MathUtils.clamp(cast * 0.74 + packed * 0.26, 0, 1);
   }
 
   return puffs;
