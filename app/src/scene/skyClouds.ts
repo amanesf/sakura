@@ -321,7 +321,13 @@ const FRAGMENT_SHADER = /* glsl */ `
     return total;
   }
 
-  float cloudDensity(vec3 p, float time, out float outIsTower) {
+  // The *shape* only — density before the fine worley erosion carving. Kept as its
+  // own function because cloudNormal() below needs to take finite differences of
+  // it: differencing the fully-eroded cloudDensity would pick up the erosion
+  // noise itself and produce a noisy, speckled normal (see marchClouds' header
+  // comment on why that broke the toon shading). This is the smooth "implicit
+  // solid" that anime cloud painting effectively shades.
+  float cloudShape(vec3 p, float time, out float outIsTower) {
     float altitude = length(p - PLANET_CENTER) - PLANET_RADIUS;
     outIsTower = 0.0;
     if (altitude < CLOUD_BASE_KM) return 0.0;
@@ -380,16 +386,46 @@ const FRAGMENT_SHADER = /* glsl */ `
     float radiusAtHeight = baseRadiusAtHeight * max(radiusPerturb, 0.15);
     float distToCenter = length(toCenter) - (lobeNoise * baseRadiusAtHeight * 0.5);
 
-    float erosion = worley3D(vec3(warped * 0.35, altitude * 0.35));
-
     float radialFalloff = 1.0 - smoothstep(radiusAtHeight * 0.35, radiusAtHeight * 1.15, max(distToCenter, 0.0));
     float topFalloff = 1.0 - smoothstep(towerTop - 0.9, towerTop + 0.25 + fineNoise * 0.6, altitude);
     float towerDensity = radialFalloff * topFalloff;
-    towerDensity *= clamp(1.3 - erosion * 1.4, 0.0, 1.0);
     towerDensity *= step(altitude, towerTop + 1.2);
 
     outIsTower = step(backgroundDensity, towerDensity);
     return clamp(max(backgroundDensity, towerDensity), 0.0, 1.0);
+  }
+
+  // Fine worley erosion carved on top of the smooth shape — this is what should
+  // drive extinction/opacity (it's fine for the cloud's *alpha* to be a bit
+  // textured), just not the shading normal.
+  float cloudDensity(vec3 p, float time, out float outIsTower) {
+    float shape = cloudShape(p, time, outIsTower);
+    if (shape <= 0.0) return 0.0;
+    float altitude = length(p - PLANET_CENTER) - PLANET_RADIUS;
+    vec2 windDrift = vec2(0.16, 0.05) * time;
+    vec2 flow = curl2D(p.xz * 0.10 + time * 0.025) * 0.35;
+    vec2 warped = p.xz + windDrift + flow;
+    float erosion = worley3D(vec3(warped * 0.35, altitude * 0.35));
+    return clamp(shape * clamp(1.3 - erosion * 1.4, 0.0, 1.0), 0.0, 1.0);
+  }
+
+  // Smooth surface normal from the *shape* field's gradient (not the eroded
+  // density) — the mathematical core of the fix: anime cloud shading is
+  // effectively toon-shading an implicit smooth solid via N·L, not accumulating
+  // noisy volumetric self-shadow. A large-ish epsilon (0.35km) also helps average
+  // out what small-scale noise remains in cloudShape (the lobe/fine noise terms),
+  // keeping the normal — and therefore the light/shadow boundary — coherent
+  // instead of salt-and-pepper.
+  vec3 cloudNormal(vec3 p, float time) {
+    float eps = 0.35;
+    float dummy;
+    float c = cloudShape(p, time, dummy);
+    float dx = c - cloudShape(p + vec3(eps, 0.0, 0.0), time, dummy);
+    float dy = c - cloudShape(p + vec3(0.0, eps, 0.0), time, dummy);
+    float dz = c - cloudShape(p + vec3(0.0, 0.0, eps), time, dummy);
+    vec3 n = vec3(dx, dy, dz);
+    float len = length(n);
+    return len < 1e-5 ? vec3(0.0, 1.0, 0.0) : n / len;
   }
 
   const int CLOUD_STEPS = 80;
@@ -457,23 +493,32 @@ const FRAGMENT_SHADER = /* glsl */ `
       float density = cloudDensity(samplePos, time, isTower);
       if (density <= 0.001) continue;
 
-      float rawShadow = lightMarch(samplePos, sunDir, time);
-      // Posterize the self-shadow term itself (not just the final color) so the
-      // discretization happens *before* it drives the phase/powder math below —
-      // otherwise those would still respond to the original continuous gradient
-      // and the quantization would only be skin-deep. Only 2 bands (not 3): the
-      // self-shadow value is itself noisy (it's a march through the same noisy
-      // density field), and 3+ narrow bands turn that noise into speckled salt-
-      // and-pepper flicker between adjacent bands instead of one coherent shadow
-      // shape. A wide, soft transition further keeps small noise from crossing
-      // the single boundary.
-      float shadow = posterizeSoft(rawShadow, 2.0);
+      // Primary shading driver: N·L against a *smooth* surface normal (the
+      // gradient of the un-eroded shape field), toon-quantized — this is the
+      // actual fix for the speckling. The previous version posterized the
+      // volumetric self-shadow value directly, but that value is inherently
+      // noisy (a march through the same fractal density field the shape is made
+      // of), so quantizing it just turned continuous noise into discrete salt-
+      // and-pepper. A density-gradient normal is coherent by construction, the
+      // same way a toon-shaded 3D model's surface normal is — anime cloud
+      // painting shades an implicit smooth solid, not a participating medium.
+      vec3 normal = cloudNormal(samplePos, time);
+      float NdotL = dot(normal, sunDir);
+      float shadow = posterizeSoft(clamp(NdotL * 0.5 + 0.5, 0.0, 1.0), 3.0);
+
+      // Cast shadow from other cloud mass (e.g. a tower's own overhang darkening
+      // what's beneath it) stays as a *continuous* secondary multiplier — folding
+      // it back in post-quantization, rather than quantizing it itself, keeps the
+      // coherent N·L boundary as the dominant visual read while still letting
+      // genuinely-occluded pockets go darker.
+      float castShadow = lightMarch(samplePos, sunDir, time);
+      float shadeFactor = shadow * mix(0.6, 1.0, castShadow);
 
       float a = 1.0, b = 1.0, c = 1.0;
       float lightEnergy = 0.0;
       for (int o = 0; o < 4; o++) {
         float phase = mix(phaseHG(mu, MIE_G * b), phaseHG(-mu, 0.25 * b), 0.25);
-        lightEnergy += a * phase * pow(shadow, c);
+        lightEnergy += a * phase * pow(shadeFactor, c);
         a *= 0.5; b *= 0.5; c *= 0.75;
       }
       float powder = 1.0 - exp(-density * 3.0 * CLOUD_EXTINCTION);
