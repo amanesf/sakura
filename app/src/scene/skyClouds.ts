@@ -178,22 +178,28 @@ const FRAGMENT_SHADER = /* glsl */ `
   // cloudNormal()'s gradient naturally curves around *each lobe's own center*
   // near that lobe — which is exactly what makes per-lobe shading fall out for
   // free, the same way it does for raymarched metaballs.
+  // Deterministic "skeleton curve" the big spheres are strung along — per Fang et
+  // al. 2019 ("Procedural Modelling of Auspicious Cloud"): place circles/spheres
+  // along a skeleton curve rather than scattering them independently. A bounded
+  // sum of a couple of sine waves (not a random walk) can never drift away
+  // unboundedly, which is what caused the earlier "ring/disconnected blob" bug —
+  // this is a smooth function of heightFrac alone, so it's coherent by
+  // construction. seed shifts the phase so different clouds get different S-curves.
+  vec2 skeletonCurve(float heightFrac, float radius, float seed) {
+    float phase = seed * 6.28318;
+    float x = sin(heightFrac * 4.08 + phase) * radius * 0.32
+      + sin(heightFrac * 13.2 + phase * 1.7) * radius * 0.12;
+    float z = cos(heightFrac * 3.45 + phase * 1.3) * radius * 0.22;
+    return vec2(x, z);
+  }
+
   float sphereClusterSDF(vec3 p, vec2 centerXZ, float baseAlt, float topAlt, float radius, float seed) {
     float heightSpan = max(topAlt - baseAlt, 0.001);
     float d = 1.0e5;
 
-    // Independently-random offsets per sphere risked scattering big spheres far
-    // enough apart to look like separate floating blobs (or, worse, a ring/arch
-    // where a viewer's line of sight grazes between two disjoint lobes) instead
-    // of one connected mass — exactly the "doesn't read as a cumulonimbus" bug.
-    // Chaining each big sphere's XZ offset from the *previous* one, by a step
-    // small relative to their radii, guarantees consecutive (height-ordered)
-    // spheres always overlap enough to fuse solidly, like a stacked string of
-    // pearls rather than independently-thrown dice.
     const int BIG_COUNT = 4;
     vec3 bigCenters[BIG_COUNT];
     float bigRadii[BIG_COUNT];
-    vec2 chainOffset = vec2(0.0);
     for (int i = 0; i < BIG_COUNT; i++) {
       float fi = float(i);
       vec3 hs = vec3(
@@ -201,15 +207,19 @@ const FRAGMENT_SHADER = /* glsl */ `
         hash13(vec3(seed, fi, 2.0)),
         hash13(vec3(seed, fi, 3.0))
       );
-      float heightFrac = clamp((fi + 0.5) / float(BIG_COUNT) + (hs.z - 0.5) * 0.2, 0.05, 0.95);
-      chainOffset += (hs.xy - 0.5) * radius * 0.3;
+      float heightFrac = clamp((fi + 0.5) / float(BIG_COUNT) + (hs.z - 0.5) * 0.15, 0.05, 0.95);
+      vec2 skeletonXZ = skeletonCurve(heightFrac, radius, seed);
       vec3 sphereCenter = vec3(
-        centerXZ.x + chainOffset.x,
+        centerXZ.x + skeletonXZ.x,
         baseAlt + heightFrac * heightSpan,
-        centerXZ.y + chainOffset.y
+        centerXZ.y + skeletonXZ.y
       );
-      // Narrower toward the top — a tower's upper lobes are smaller than its base.
-      float sphereRadius = radius * mix(0.9, 0.55, heightFrac) * mix(0.85, 1.15, hs.z);
+      // Narrower toward the top (a tower's upper lobes are smaller than its
+      // base), modulated by an oscillating "indentation coefficient" along the
+      // skeleton (the paper's f/f') so consecutive lobes alternate bulge/pinch
+      // rather than growing perfectly monotonically.
+      float indentation = mix(0.8, 1.2, sin(heightFrac * 9.4 + seed * 6.28318) * 0.5 + 0.5);
+      float sphereRadius = radius * mix(0.9, 0.55, heightFrac) * indentation * mix(0.9, 1.1, hs.z);
       bigCenters[i] = sphereCenter;
       bigRadii[i] = sphereRadius;
       d = smin(d, sdSphere(p, sphereCenter, sphereRadius), radius * 0.4);
@@ -543,7 +553,9 @@ const FRAGMENT_SHADER = /* glsl */ `
       // painting shades an implicit smooth solid, not a participating medium.
       vec3 normal = cloudNormal(samplePos, time);
       float NdotL = dot(normal, sunDir);
-      float shadow = posterizeSoft(clamp(NdotL * 0.5 + 0.5, 0.0, 1.0), 3.0);
+      // 4 bands, not 3 — the cloud-painting research describes base/midtone/dark/
+      // highlight as four distinct tonal steps, not three.
+      float shadow = posterizeSoft(clamp(NdotL * 0.5 + 0.5, 0.0, 1.0), 4.0);
 
       // Cast shadow from other cloud mass (e.g. a tower's own overhang darkening
       // what's beneath it) stays as a *continuous* secondary multiplier — folding
@@ -563,14 +575,20 @@ const FRAGMENT_SHADER = /* glsl */ `
       float powder = 1.0 - exp(-density * 3.0 * CLOUD_EXTINCTION);
       lightEnergy *= mix(1.0, powder, clamp(phaseHG(mu, MIE_G), 0.0, 1.0) * 2.0);
 
-      // Split-tone: shadow zones pick up cool skylight (blue), lit zones pick up
-      // warm direct sunlight (yellow/orange) — anime cloud painting separates
-      // light and shadow by hue, not just brightness, rather than one neutral
-      // white shaded darker. Driven by the same posterized shadow value, so it
-      // steps in hard-edged bands together with the brightness.
-      vec3 shadowTint = vec3(0.4, 0.55, 0.92);
+      // Anime cloud-painting research: shadow and highlight aren't just a lerp
+      // toward two target colors — they're painted as a *multiply* layer (shadow,
+      // darkens while keeping/shifting hue toward cool blue) and a separate
+      // *additive/glow* layer (highlight, brightens toward white without being
+      // capped at the base color), composited on top of a base color that isn't
+      // pure white either. Reproducing that as two different operators (not one
+      // mix) is what gives the graphic, punchy look instead of a soft gradient.
+      vec3 baseCloudColor = vec3(1.02, 1.0, 0.96);
+      vec3 shadowMultiply = mix(vec3(0.42, 0.52, 0.85), vec3(1.0, 0.98, 0.93), shadow);
+      vec3 litColor = baseCloudColor * shadowMultiply;
+      float highlightMask = smoothstep(0.68, 1.0, shadow);
+      vec3 highlightAdd = vec3(0.35, 0.28, 0.14) * highlightMask;
+      vec3 sunColor = litColor + highlightAdd;
       vec3 highlightTint = vec3(1.15, 1.02, 0.78);
-      vec3 sunColor = mix(shadowTint, highlightTint, shadow);
 
       // Silver lining: a thin, still-mostly-transparent (high running
       // transmittance) patch of cloud seen close to the sun direction lets a lot
