@@ -26,20 +26,29 @@ export function buildNoduleGeometry(seed: number, flatten: number): THREE.Buffer
   // read as faceted rock rather than soft cauliflower. Three displacement
   // octaves — a coarse one for a few big lobes, and two finer ones riding on
   // top for the actual cauliflower bumpiness.
-  const geometry = new THREE.SphereGeometry(1, 32, 18);
+  const geometry = new THREE.SphereGeometry(1, 40, 22);
   const position = geometry.attributes.position;
   const v = new THREE.Vector3();
   for (let i = 0; i < position.count; i++) {
     v.fromBufferAttribute(position, i);
     if (v.length() < 1e-6) continue;
-    // A high-amplitude *low*-frequency octave is what reads as faceted rock —
-    // at low frequency there just aren't enough vertices per bump for the
-    // smoothing to hide the facets, no matter how high-poly the base sphere
-    // is. Kept low-amplitude and leaned on the extra octaves instead.
-    const coarse = fbm3(v.x * 1.7, v.y * 1.7, v.z * 1.7, seed, 3);
-    const fine = fbm3(v.x * 4.6, v.y * 4.6, v.z * 4.6, seed + 91.0, 3);
-    const micro = fbm3(v.x * 9.1, v.y * 9.1, v.z * 9.1, seed + 613.0, 2);
-    v.multiplyScalar(1 + coarse * 0.26 + fine * 0.11 + micro * 0.045);
+    // Signed, high-amplitude coarse displacement. The previous amplitudes
+    // (0.26/0.11/0.045 on an unsigned FBM) left every nodule a very slightly
+    // dented sphere, and a heap of slightly dented spheres reads as exactly
+    // that — cauliflower balls. What breaks the read is *concavity*: the coarse
+    // octave is now centred on zero and strong enough to pull parts of the
+    // surface well inside the unit radius, so a nodule's own outline develops
+    // dents and cusps rather than staying convex everywhere.
+    const coarse = fbm3(v.x * 1.15, v.y * 1.15, v.z * 1.15, seed, 3) - 0.5;
+    const mid = fbm3(v.x * 2.6, v.y * 2.6, v.z * 2.6, seed + 91.0, 3) - 0.5;
+    const fine = fbm3(v.x * 5.3, v.y * 5.3, v.z * 5.3, seed + 613.0, 3) - 0.5;
+    const micro = fbm3(v.x * 11.0, v.y * 11.0, v.z * 11.0, seed + 1277.0, 2) - 0.5;
+    // Ridged on the mid octave: abs() folds the noise so its zero crossings
+    // become creases instead of smooth passes, which is what puts the sharp
+    // cusps between bumps that a plain FBM cannot produce.
+    const ridge = 0.5 - Math.abs(mid) * 2.0;
+    const r = 1 + coarse * 0.3 + ridge * 0.09 + fine * 0.12 + micro * 0.05;
+    v.multiplyScalar(Math.max(r, 0.55));
     position.setXYZ(i, v.x, v.y, v.z);
   }
   geometry.scale(1, 0.88 * flatten, 1);

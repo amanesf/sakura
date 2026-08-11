@@ -87,7 +87,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far a puff nestled among neighbours is pushed down the ramp.
       // Measured target: ~48% of the reference's cloud interior sits below
       // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.46 },
+      uOcclusion: { value: 0.4 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
@@ -103,8 +103,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uTierMix: { value: 0.7 },
       uTerminator: { value: 0.68 },
       uPerLobeTint: { value: 0.13 },
-      uDetailFocus: { value: 0.4 },
-      uHighlightKnee: { value: 0.93 },
+      uDetailFocus: { value: 0.55 },
+      uHighlightKnee: { value: 0.915 },
       uHighlightGain: { value: 0.9 },
       // Bright enough to clip to 255 through ACES at exposure 1.2 (anything
       // past ~10 saturates), but not so far past it that the bloom threshold
@@ -138,7 +138,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.01 },
+      uBias: { value: -0.03 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -328,7 +328,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
   const halo = new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: new THREE.Vector3(haloColor.r, haloColor.g, haloColor.b) },
-      uOpacity: { value: 0.08 },
+      uOpacity: { value: 0.5 },
+      uFringePower: { value: 0.9 },
     },
     transparent: true,
     depthWrite: false,
@@ -347,12 +348,19 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
     fragmentShader: /* glsl */ `
       uniform vec3 uColor;
       uniform float uOpacity;
+      uniform float uFringePower;
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
       void main() {
         // Fade out face-on and keep only the grazing shell, so the fringe
         // reads as wispy edge rather than a uniform fog dome over the puff.
-        float edge = pow(1.0 - clamp(dot(normalize(vNormalW), normalize(vViewDirW)), 0.0, 1.0), 2.0);
+        // Falloff exponent well below 1 (was 2.0). At 2.0 the fringe was
+        // confined to a hairline right at the grazing angle and, at the 0.08
+        // opacity it was carrying, contributed nothing — every cloud met the
+        // sky at a hard polygon boundary, which is most of why the lobes read
+        // as solid plastic balls rather than as condensed water. A broad, weak
+        // shell reads as the thinning optical depth at a cloud's edge.
+        float edge = pow(1.0 - clamp(dot(normalize(vNormalW), normalize(vViewDirW)), 0.0, 1.0), uFringePower);
         gl_FragColor = vec4(uColor, edge * uOpacity);
       }`,
   });

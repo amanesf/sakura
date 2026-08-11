@@ -143,7 +143,7 @@ function buildPuffCluster(
       // lobes within the body of the cloud — puffs need to overlap generously,
       // not just touch, or gaps show through as translucent halo instead of
       // solid mass.
-      const puffScaleRaw = radius * 0.82 * rankSize * bulk * grain * (0.6 + rand() * 0.7);
+      const puffScaleRaw = radius * 0.98 * rankSize * bulk * grain * (0.6 + rand() * 0.7);
       // Hard cap relative to the level radius: no single puff should be able
       // to outgrow the band it's scattered in, whatever grain rolled.
       // Cap tightened 0.95 -> 0.5 of the level radius. Comparing crops of the
@@ -153,7 +153,7 @@ function buildPuffCluster(
       // behind, while the render was a handful of large lobes with soft
       // gradients between them. No amount of shading noise produces edges —
       // only more, smaller silhouettes do.
-      const puffScale = Math.min(puffScaleRaw, radius * 0.24);
+      const puffScale = Math.min(puffScaleRaw, radius * 0.31);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
