@@ -88,7 +88,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far a puff nestled among neighbours is pushed down the ramp.
       // Measured target: ~48% of the reference's cloud interior sits below
       // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.34 },
+      uOcclusion: { value: 0.20 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
@@ -115,11 +115,15 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // solid object's shadow. The 5x5 taps are spread over ~40 texels so the
       // result is a soft partial occlusion at cloud-mass scale.
       uShadowRadius: { value: 1.6 },
-      uShadowStrength: { value: 0.34 },
+      uShadowStrength: { value: 0.22 },
       uMacroScale: { value: 0.16 },
       uMacroAmount: { value: 0.3 },
-      uWashScale: { value: 0.035 },
-      uWashAmount: { value: 0.2 },
+      // Now in cluster-local km (see the wash term in the fragment shader).
+      // 0.22 puts the hero tower's 4.3km half-width at about 0.78 of the
+      // clamp, so the mass uses most of the available ramp without flattening
+      // against it, and the small cumulus scale down in proportion.
+      uWashScale: { value: 0.22 },
+      uWashAmount: { value: 0.62 },
       uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
       uHighlightKnee: { value: 0.82 },
@@ -170,7 +174,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.06 },
+      uBias: { value: -0.13 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -352,11 +356,21 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // graded wash a background painter lays over the whole cloud before
         // any detail goes down. Crude on its own, but it guarantees a
         // large-scale gradient exists at all.
-        // Centred on the cloud field and clamped: an uncentred dot product
-        // grows without bound with distance, and the far bank sits 90km out,
-        // so the raw term reached -1.2 and crushed the whole background to the
-        // bottom of the ramp.
-        float wash = clamp(dot(vWorldPos - uFieldCenter, normalize(uLightDir)) * uWashScale, -1.0, 1.0);
+        // Measured against each cluster's *own* centre, not a single world
+        // field centre. The world-centred version had to be kept tiny for a
+        // reason that had nothing to do with the hero tower: the far bank sits
+        // 90km out, so its dot product saturated the clamp and any usable
+        // strength crushed the whole background. That forced a scale so small
+        // that across the tower's own 4.3km radius the term moved the shading
+        // by about 0.025 — around two levels of luminance. It was, in effect,
+        // switched off exactly where it was supposed to be doing the work.
+        //
+        // Cluster-local coordinates decouple the two: distance from camera no
+        // longer enters, so the strength can be set by how much gradient a
+        // cloud mass should carry across itself, and it scales naturally with
+        // mass size (a big tower has more depth for light to fall through than
+        // a small cumulus, and now gets a correspondingly bigger ramp).
+        float wash = clamp(dot(vClusterPos, normalize(uLightDir)) * uWashScale, -1.0, 1.0);
         s += wash * uWashAmount;
 
         // Rim. Sampling the reference along its own silhouette showed this was
@@ -465,8 +479,6 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         vec4 worldPos = modelMatrix * instanced;
         vNormalW = normalize(mat3(modelMatrix) * normalize(mat3(instanceMatrix) * normal));
         vec3 toCam = cameraPosition - worldPos.xyz;
-        vDist = length(toCam);
-        vWorldPos = worldPos.xyz;
         vViewDirW = normalize(toCam);
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }`,

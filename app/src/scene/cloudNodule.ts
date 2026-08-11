@@ -47,7 +47,14 @@ export function buildNoduleGeometry(seed: number, flatten: number): THREE.Buffer
     // become creases instead of smooth passes, which is what puts the sharp
     // cusps between bumps that a plain FBM cannot produce.
     const ridge = 0.5 - Math.abs(mid) * 2.0;
-    const r = 1 + coarse * 0.3 + ridge * 0.09 + fine * 0.12 + micro * 0.05;
+    // Ridge and fine amplitudes raised (0.09/0.12 -> 0.14/0.15). Measuring the
+    // silhouette as a radius-vs-angle signal and detrending it, the reference's
+    // outline carries bumps of 35px mean radius at 11.9px depth; this render
+    // was at 41px and 9.0px — both too coarse and too shallow, i.e. the
+    // scallops are there but they are shallow scoops rather than the deep
+    // cuts between lobes the reference has. The ridged octave is the one that
+    // makes cusps rather than swells, so it takes the larger share.
+    const r = 1 + coarse * 0.3 + ridge * 0.14 + fine * 0.15 + micro * 0.05;
     v.multiplyScalar(Math.max(r, 0.55));
     position.setXYZ(i, v.x, v.y, v.z);
   }

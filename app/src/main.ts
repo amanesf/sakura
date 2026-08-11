@@ -28,10 +28,30 @@ const sunDir = sunDirection(TIME_OF_DAY_T);
 // Art-directed key light for the clouds — deliberately *not* the true sun
 // direction above. Per the Guilty Gear Xrd cel-shading research, professional
 // stylized 3D lighting is chosen for how the form reads, not physical
-// accuracy: requested here is a raking cross-light with the source up, to the
-// left, and near the camera, light travelling down toward the right and into
-// the distance ("左手前から右奥方向へ") rather than straight down from above.
-const CLOUD_LIGHT_DIR = new THREE.Vector3(-0.55, 0.7, 0.55).normalize();
+// accuracy. The requested travel is "左手前から右奥方向へ": down and to the
+// right, away from the viewer.
+//
+// The previous value (-0.55, 0.7, 0.55) took "手前" literally and put a third
+// of the light vector straight down the camera axis, pointing the lit pole of
+// every puff at the lens. That is the flat-light case: the whole visible
+// hemisphere sits near the top of the shading curve and no terminator appears
+// anywhere on screen. Measured, the reference tower's luminance falls 7.8 per
+// 100px from left to right across the mass and its left half is 10.7 brighter
+// than its right; this scene managed +0.3 and -1.2 — no lateral modelling at
+// all. Nothing downstream could fix that, which is why the rim and the large
+// shadow masses never appeared however hard they were pushed: there was no
+// shadow side for them to live on.
+//
+// So the depth component is reversed and the vector swung to the side. Travel
+// is still left→right and still downward — the read the direction was chosen
+// for — but the source now sits beyond the cloud rather than beside the
+// camera, so the near face is the shadow face. Values resolved by sweeping
+// candidates through scripts/capture.js + scripts/measure.js and taking the
+// one that lands on the reference's gradient, not by eye.
+const LIGHT_QUERY = new URLSearchParams(window.location.search).get('light');
+const CLOUD_LIGHT_DIR = LIGHT_QUERY
+  ? new THREE.Vector3(...(LIGHT_QUERY.split(',').map(Number) as [number, number, number])).normalize()
+  : new THREE.Vector3(-0.78, 0.45, -0.44).normalize();
 
 // No THREE.Light in the scene any more: the cloud material is unlit and
 // indexes a colour ramp measured out of the reference image (cloudRamp.ts),

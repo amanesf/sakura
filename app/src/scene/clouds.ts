@@ -161,7 +161,12 @@ function buildPuffCluster(
       // behind, while the render was a handful of large lobes with soft
       // gradients between them. No amount of shading noise produces edges —
       // only more, smaller silhouettes do.
-      const puffScale = Math.min(puffScaleRaw, radius * 0.31);
+      // 0.31 -> 0.25 of the level radius. Same measurement as the nodule
+      // displacement above: the silhouette's bumps come out at 41px mean
+      // radius against the reference's 35px, and a bump on the outline *is* a
+      // puff seen edge-on, so the only way to shrink one is to shrink the
+      // other.
+      const puffScale = Math.min(puffScaleRaw, radius * 0.25);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now

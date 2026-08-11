@@ -1,3 +1,36 @@
+# scripts/capture.js + scripts/measure.js
+
+The render/measure loop the sky work is tuned with. plan.md §2 rules out
+adjusting colour and form by eye, so every claim about the render has to come
+out of a statistic computed the same way on the render and on the reference
+image. Both sessions so far have rebuilt this ad hoc and lost it; it lives here
+now.
+
+```sh
+# deterministic 1408x768 capture (the scene freezes at ?t=<seconds>)
+node scripts/capture.js /tmp/shot.png 0
+
+# override the cloud key light without editing source, for sweeps
+node scripts/capture.js /tmp/shot.png 0 "light=-0.78,0.45,-0.44"
+
+# compare crops — reference first, render second
+node scripts/measure.js ref_tower.png render_tower.png
+```
+
+Notes:
+
+- Crop both images to the hero tower before measuring. `measure.js` works on
+  the largest connected cloud mass, and in a full frame that mass merges with
+  the low bank, which dilutes every statistic.
+- The reference is an illustration with a girl and window frames in it, so only
+  the area inside the glass is sky — crop from there.
+- Under SwiftShader one capture takes several minutes. `capture.js` reads the
+  canvas from inside a frame callback rather than using `page.screenshot()`,
+  which times out at that speed.
+- Reported: `lateral`/`gradX`/`gradY` (does a key light read across the mass at
+  all), `sd` (tonal spread), `softFrac`/`medEdge` (fringe), `rimFrac` (rim
+  light), `bumpR`/`bumpDepth` (silhouette scalloping).
+
 # scripts/gemini_call.js
 
 CLI wrapper around the Gemini image generation API, used for every generated
