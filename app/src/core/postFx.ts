@@ -5,7 +5,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GradeShader } from '../effects/gradeShader';
-import { KuwaharaShader } from '../effects/kuwaharaShader';
+import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
@@ -47,12 +47,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // pixels — the cloud crown sits near 8.0 while its shadows sit below 0.5,
   // so almost every window would pick the same quadrant and the filter would
   // smear rather than form painterly regions.
-  const kuwaharaPass = new ShaderPass(KuwaharaShader);
+  const kuwaharaPass = new AnisotropicKuwaharaPass(window.innerWidth, window.innerHeight);
   composer.addPass(kuwaharaPass);
 
   const setSize = (width: number, height: number) => {
     composer.setSize(width, height);
-    kuwaharaPass.uniforms.uTexelSize.value = [1 / width, 1 / height];
+    kuwaharaPass.setSize(width, height);
     bloomPass.setSize(width, height);
     gradePass.uniforms.uAspect.value = width / height;
   };

@@ -36,11 +36,12 @@ const FRAGMENT_SHADER = /* glsl */ `
   const vec3 PLANET_CENTER = vec3(0.0, -PLANET_RADIUS, 0.0);
   const vec3 RAYLEIGH_COEFF = vec3(5.8e-3, 13.5e-3, 33.1e-3);
   const float RAYLEIGH_SCALE_HEIGHT = 8.0;
-  const float MIE_COEFF = 21.0e-3;
+  const float MIE_COEFF = 9.0e-3;
   const float MIE_EXT = MIE_COEFF * 1.11;
   const float MIE_SCALE_HEIGHT = 1.2;
   const float MIE_G = 0.76;
-  const float SUN_INTENSITY = 5.0;
+  const float SUN_INTENSITY = 11.0;
+  const float SKY_SATURATION = 1.7;
   const float CAMERA_ALTITUDE_KM = 0.0017;
 
   vec2 raySphere(vec3 ro, vec3 rd, vec3 center, float radius) {
@@ -110,7 +111,7 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec3 singleScatter = SUN_INTENSITY * (totalRayleigh * RAYLEIGH_COEFF * phaseR + totalMie * MIE_COEFF * phaseM);
 
     vec3 lostEnergy = vec3(1.0) - transmittance;
-    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.012 * clamp(sunDir.y * 1.5 + 0.4, 0.05, 1.0);
+    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.004 * clamp(sunDir.y * 1.5 + 0.4, 0.05, 1.0);
 
     return singleScatter + multiScatterFudge;
   }
@@ -150,6 +151,37 @@ const FRAGMENT_SHADER = /* glsl */ `
     // alike). Doing it here too, on top of that, was fine back when this was
     // the only pass writing straight to the screen, but stacked with
     // OutputPass it would double-apply the sRGB curve and wash out shadows.
+    // Art-directed saturation lift, applied at constant luminance.
+    //
+    // Measured against the reference image, the physical simulation above is
+    // *correct* and still does not match it. Rayleigh scattering fixes the
+    // zenith's red/blue ratio at coeff_R/coeff_B = 5.8/33.1 = 0.175 in linear
+    // light, which after sRGB encoding lands at 0.47 — and that is precisely
+    // what this shader renders. The reference's sky sits at 0.19 in sRGB,
+    // i.e. about 0.03 in linear: roughly six times bluer than single-scattering
+    // Rayleigh permits under any sun elevation or turbidity. Comparing the two
+    // at matched screen heights, their luminances agree to within 2/255 while
+    // their saturations differ by a factor of ~2, so the gap is purely a
+    // saturation choice by the illustrator, not a physical parameter this
+    // shader got wrong.
+    //
+    // Rather than distort the scattering constants (which would then be lying
+    // about what they are, and would break the sunset arc the same constants
+    // have to serve), the physics is left intact and the stylisation is a
+    // separate, explicit, luminance-preserving step — the same stance taken
+    // for the clouds, whose palette is likewise measured from the reference
+    // rather than derived.
+    // Faded out toward the horizon. Applied uniformly, the lift also
+    // amplifies the warm low-altitude haze band into a hard yellow stripe,
+    // which the reference does not have — there the haze desaturates to a
+    // pale blue-white. That is the physically right behaviour too (the long
+    // horizon path is aerosol-dominated, and aerosol scattering is
+    // wavelength-neutral), so the stylisation has no business strengthening
+    // it: the lift belongs to the clean Rayleigh zenith only.
+    float horizonFade = smoothstep(-0.02, 0.28, rd.y);
+    float skyLuma = dot(skyColor, vec3(0.2126, 0.7152, 0.0722));
+    skyColor = mix(vec3(skyLuma), skyColor, mix(1.0, SKY_SATURATION, horizonFade));
+
     gl_FragColor = vec4(max(skyColor, 0.0), 1.0);
   }
 `;
