@@ -6,6 +6,7 @@ import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials, createCloudCluster, type CloudClusterHandle } from './scene/clouds';
 import { sunDirection } from './core/solarPosition';
 import { createPostFx } from './core/postFx';
+import { createCloudShadow } from './scene/cloudShadow';
 
 const appHost = document.querySelector<HTMLDivElement>('#app')!;
 
@@ -38,6 +39,20 @@ const CLOUD_LIGHT_DIR = new THREE.Vector3(-0.55, 0.7, 0.55).normalize();
 // DirectionalLight/HemisphereLight here would do nothing but cost uniforms.
 
 const materials = createCloudMaterials(CLOUD_LIGHT_DIR);
+
+// Light-space depth map for cloud self-shadowing.
+//
+// Deliberately tiny — 256 across a ~156km field, so one texel is about 0.6km
+// and a single puff is under two texels. At 1024 it worked, but it resolved
+// individual lobes: measured band energy rose in the 2-16px range and did not
+// move at 40-80px at all, which is the opposite of what this term is for. A
+// map too coarse to see one puff can only record where whole masses of cloud
+// are, and that is exactly the scale of shadow that groups lobes into a light
+// side and a shadow side.
+const CLOUD_FIELD_CENTER = new THREE.Vector3(0, 5, -34);
+const cloudShadow = createCloudShadow(CLOUD_LIGHT_DIR, CLOUD_FIELD_CENTER, 78, 256);
+materials.core.uniforms.uShadowMap.value = cloudShadow.texture;
+materials.core.uniforms.uShadowMatrix.value = cloudShadow.matrix;
 
 /** Simplified thermal-rise growth curve — ported from the shader version this
  * replaces (see plan.md §3.3): height ~ sqrt(t) while rising, then a hold,
@@ -84,6 +99,11 @@ interface AnimatedCluster {
 
 const clusters: AnimatedCluster[] = [];
 
+// The sky is a fullscreen quad that ignores the camera, so it would fill the
+// depth map entirely; the halos are translucent shells that would shadow their
+// own cores.
+const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
+
 function addCluster(
   seed: number,
   center: THREE.Vector2,
@@ -97,6 +117,7 @@ function addCluster(
 ): void {
   const handle = createCloudCluster(seed, center, baseAlt, topAltFull, levels, radiusProfile, puffsPerLevel, materials, CLOUD_LIGHT_DIR);
   scene.add(handle.group);
+  hiddenDuringShadowPass.push(handle.halo);
   clusters.push({
     handle,
     cycleSeconds,
@@ -226,6 +247,9 @@ function renderLoop() {
     const wind = new THREE.Vector2(Math.cos(angle) * dist, Math.sin(angle) * dist);
     c.handle.update(elapsed, growth, wind);
   }
+
+  // After the clusters have moved, before anything is shaded with it.
+  cloudShadow.update(renderer, scene, hiddenDuringShadowPass);
 
   postFx.render();
 }

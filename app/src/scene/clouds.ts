@@ -36,6 +36,10 @@ interface Nodule {
 
 export interface CloudClusterHandle {
   group: THREE.Group;
+  /** Exposed so the light-space depth pass can hide it: the fringe is a
+   * translucent shell and would otherwise write a depth several percent in
+   * front of the solid core, pushing every lobe into its own shadow. */
+  halo: THREE.InstancedMesh;
   update: (elapsed: number, growth: number, windOffset: THREE.Vector2) => void;
 }
 
@@ -174,10 +178,17 @@ function buildPuffCluster(
       // ones), not texture or a single size of ball. At least one guaranteed
       // (was 0-2, i.e. often none at all — undercounted against a reference
       // that has zero "plain, unscalloped" puffs).
-      const satelliteCount = 2 + Math.floor(rand() * 4.2);
+      // Fewer, and held close. Blurring both images at sigma 80 showed the
+      // reference carries five times more contrast at that scale than this
+      // render did, and a large part of that gap is compositional rather than
+      // tonal: the reference's cloud masses and its areas of sky are each
+      // large and unbroken, while this cloud was fringed with a spray of
+      // detached specks that punched sky through the mass and cloud through
+      // the sky, so both averaged out to the same mid value at large scale.
+      const satelliteCount = 1 + Math.floor(rand() * 2.6);
       for (let s = 0; s < satelliteCount; s++) {
         const sa = rand() * Math.PI * 2;
-        const sr = puffs[puffs.length - 1].scale * (0.35 + rand() * 0.4);
+        const sr = puffs[puffs.length - 1].scale * (0.2 + rand() * 0.3);
         const satPos = position.clone().add(
           new THREE.Vector3(Math.cos(sa) * sr, (rand() - 0.5) * sr * 0.6, Math.sin(sa) * sr),
         );
@@ -310,6 +321,11 @@ export function createCloudCluster(
   const occlusions = new Float32Array(nodules.length);
   const seeds = new Float32Array(nodules.length);
   const tints = new Float32Array(nodules.length);
+  // Position relative to the cluster centre, fixed at build time. This is the
+  // coordinate the cloud-scale shading field is evaluated in: using the live
+  // world position instead would leave the macro pattern standing still in
+  // space while the cloud drifts through it on the wind.
+  const clusterPos = new Float32Array(nodules.length * 3);
   for (let i = 0; i < nodules.length; i++) {
     occlusions[i] = nodules[i].burial;
     const h = (nodules[i].base.x * 12.9898 + nodules[i].base.z * 78.233 + nodules[i].base.y * 37.719) % 17.0;
@@ -322,10 +338,14 @@ export function createCloudCluster(
     // without disturbing the measured tonal distribution, since the offsets
     // are symmetric about zero.
     tints[i] = ((((h * 7.13) % 1.0) + 1.0) % 1.0) - 0.5;
+    clusterPos[i * 3 + 0] = nodules[i].base.x - centerXZ.x;
+    clusterPos[i * 3 + 1] = nodules[i].base.y - (baseAlt + topAlt) * 0.5;
+    clusterPos[i * 3 + 2] = nodules[i].base.z - centerXZ.y;
   }
   coreGeom.setAttribute('aOcclusion', new THREE.InstancedBufferAttribute(occlusions, 1));
   coreGeom.setAttribute('aSeed', new THREE.InstancedBufferAttribute(seeds, 1));
   coreGeom.setAttribute('aTint', new THREE.InstancedBufferAttribute(tints, 1));
+  coreGeom.setAttribute('aClusterPos', new THREE.InstancedBufferAttribute(clusterPos, 3));
 
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -358,5 +378,5 @@ export function createCloudCluster(
 
   update(0, 1, new THREE.Vector2(0, 0));
 
-  return { group, update };
+  return { group, halo: haloMesh, update };
 }

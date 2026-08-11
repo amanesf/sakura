@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GradeShader } from '../effects/gradeShader';
 import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
+import { MacroContrastPass } from '../effects/macroContrast';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
@@ -50,9 +51,16 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const kuwaharaPass = new AnisotropicKuwaharaPass(window.innerWidth, window.innerHeight);
   composer.addPass(kuwaharaPass);
 
+  // Last, after the painterly filter: this widens the separation between the
+  // large light and shadow masses, and running it before Kuwahara would just
+  // hand that filter a wider range to average back down.
+  const macroPass = new MacroContrastPass(window.innerWidth, window.innerHeight);
+  composer.addPass(macroPass);
+
   const setSize = (width: number, height: number) => {
     composer.setSize(width, height);
     kuwaharaPass.setSize(width, height);
+    macroPass.setSize(width, height);
     bloomPass.setSize(width, height);
     gradePass.uniforms.uAspect.value = width / height;
   };

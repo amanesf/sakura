@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { createCloudRampTexture, sampleCloudRampHDR } from './cloudRamp';
+import { CLOUD_SHADOW_GLSL } from './cloudShadow';
 
 /**
  * Unlit, ramp-indexed cloud shading.
@@ -99,13 +100,30 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // transitions between them — the painted look of discrete shadow
       // regions with blended-but-defined boundaries, rather than either a
       // continuous ramp (too smooth) or hard cel bands (too graphic).
-      uTiers: { value: 5.0 },
+      uTiers: { value: 4.0 },
+      uTierSoft: { value: 0.34 },
+      uTierBleed: { value: 0.09 },
+      uTierBleedScale: { value: 3.4 },
       uTierMix: { value: 0.7 },
       uTerminator: { value: 0.68 },
       uPerLobeTint: { value: 0.13 },
+      uShadowMap: { value: null as THREE.Texture | null },
+      uShadowMatrix: { value: new THREE.Matrix4() },
+      uShadowTexel: { value: 1 / 256 },
+      uShadowBias: { value: 0.006 },
+      // Wide on purpose: a cloud shadow with a readable edge looks like a
+      // solid object's shadow. The 5x5 taps are spread over ~40 texels so the
+      // result is a soft partial occlusion at cloud-mass scale.
+      uShadowRadius: { value: 1.6 },
+      uShadowStrength: { value: 0.34 },
+      uMacroScale: { value: 0.16 },
+      uMacroAmount: { value: 0.3 },
+      uWashScale: { value: 0.035 },
+      uWashAmount: { value: 0.2 },
+      uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
-      uHighlightKnee: { value: 0.865 },
-      uHighlightGain: { value: 0.9 },
+      uHighlightKnee: { value: 0.80 },
+      uHighlightGain: { value: 1.15 },
       // Bright enough to clip to 255 through ACES at exposure 1.2 (anything
       // past ~10 saturates), but not so far past it that the bloom threshold
       // turns every white into a flare.
@@ -123,7 +141,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // flat brightness added to the whole cloud — the render went to 20% of
       // area at luminance 245+ against the reference's 11%, with only 5% left
       // below 205 against its 48%.
-      uRimStrength: { value: 0.16 },
+      uRimStrength: { value: 0.38 },
       // Contrast expansion applied to s before it indexes the ramp. Without
       // it the term is a sum of several roughly-uniform quantities, so it
       // piles up around 0.5 by the central limit theorem and the render comes
@@ -145,6 +163,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       attribute float aOcclusion;
       attribute float aSeed;
       attribute float aTint;
+      attribute vec3 aClusterPos;
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
       varying float vHeight;
@@ -152,6 +171,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       varying float vTint;
       varying vec3 vNoisePos;
       varying float vDist;
+      varying vec3 vClusterPos;
+      varying vec3 vWorldPos;
 
       void main() {
         vHeight = aHeight;
@@ -162,6 +183,10 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // the surface texture stand still while the cloud drifts through it
         // on the wind, which reads as the cloud shimmering rather than moving.
         vNoisePos = position + vec3(aSeed, aSeed * 1.7, aSeed * 2.3);
+        // Cluster-local coordinate for the cloud-scale field. The vertex's own
+        // offset is added at full weight so the field is continuous across a
+        // lobe rather than constant over each instance.
+        vClusterPos = aClusterPos + position;
 
         vec4 instanced = instanceMatrix * vec4(position, 1.0);
         vec4 worldPos = modelMatrix * instanced;
@@ -173,6 +198,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         vNormalW = normalize(mat3(modelMatrix) * n);
         vec3 toCam = cameraPosition - worldPos.xyz;
         vDist = length(toCam);
+        vWorldPos = worldPos.xyz;
         vViewDirW = normalize(toCam);
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }`,
@@ -187,9 +213,23 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform float uDetailAmount;
       uniform float uDetailScale;
       uniform float uTiers;
+      uniform float uTierSoft;
+      uniform float uTierBleed;
+      uniform float uTierBleedScale;
       uniform float uTierMix;
       uniform float uTerminator;
       uniform float uPerLobeTint;
+      uniform sampler2D uShadowMap;
+      uniform mat4 uShadowMatrix;
+      uniform float uShadowTexel;
+      uniform float uShadowBias;
+      uniform float uShadowRadius;
+      uniform float uShadowStrength;
+      uniform float uMacroScale;
+      uniform float uMacroAmount;
+      uniform float uWashScale;
+      uniform float uWashAmount;
+      uniform vec3 uFieldCenter;
       uniform float uDetailFocus;
       uniform float uHighlightKnee;
       uniform float uHighlightGain;
@@ -208,8 +248,11 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       varying float vTint;
       varying vec3 vNoisePos;
       varying float vDist;
+      varying vec3 vClusterPos;
+      varying vec3 vWorldPos;
 
       ${NOISE_GLSL}
+      ${CLOUD_SHADOW_GLSL}
 
       void main() {
         vec3 n = normalize(vNormalW);
@@ -256,6 +299,51 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         s -= vOcc * uOcclusion;
         s += vTint * uPerLobeTint;
 
+        // (A) Cloud self-shadow from the light-space depth map. See
+        // cloudShadow.ts for why this is here rather than relying on the
+        // per-puff optical depth above: the integral is buried inside the
+        // cluster where nothing can see it, while a light-space depth test
+        // varies across exactly the visible shell. This is the term that
+        // actually groups lobes into large light and shadow masses.
+        float lit = sampleCloudShadow(uShadowMap, uShadowMatrix, vWorldPos, uShadowTexel, uShadowBias, uShadowRadius);
+        s -= (1.0 - lit) * uShadowStrength;
+
+        // --- Cloud-scale value organisation ---
+        //
+        // Decomposing both images by spatial scale showed where the remaining
+        // gap actually lives. In the 2-16px bands this render already matches
+        // the reference (6.9/8.8 against 7.3/10.1), but in the 40-80px band it
+        // carries 4.6 against the reference's 7.6, and across the whole frame
+        // above 80px it is 4.2 against 20.9 — roughly five times less. The
+        // reference groups many lobes into one large light mass and one large
+        // shadow mass and lets the small detail ride on top; this render shaded
+        // every lobe by the same local rule, so averaged over 80px it came out
+        // flat everywhere. That is also why no post-process filter helped: a
+        // kernel a few pixels wide cannot manufacture contrast at 80px.
+        //
+        // Per-fragment shading is inherently local — N.L, occlusion and the
+        // ramp all are — so the large scale has to be introduced deliberately.
+        // Two terms do it here, and the shadow map (uShadowMap, below) is the
+        // third and most structural.
+        //
+        // (B) A low-frequency field in cluster-local space. Wavelength is on
+        // the order of the cluster itself, so it lightens and darkens whole
+        // regions of a cloud rather than individual lobes. Evaluated in
+        // cluster space, not world space, so it travels with the cloud instead
+        // of the cloud swimming through a fixed pattern.
+        s += (fbm(vClusterPos * uMacroScale) - 0.5) * uMacroAmount;
+
+        // (D) A single large directional wash along the key light — the broad
+        // graded wash a background painter lays over the whole cloud before
+        // any detail goes down. Crude on its own, but it guarantees a
+        // large-scale gradient exists at all.
+        // Centred on the cloud field and clamped: an uncentred dot product
+        // grows without bound with distance, and the far bank sits 90km out,
+        // so the raw term reached -1.2 and crushed the whole background to the
+        // bottom of the ramp.
+        float wash = clamp(dot(vWorldPos - uFieldCenter, normalize(uLightDir)) * uWashScale, -1.0, 1.0);
+        s += wash * uWashAmount;
+
         // Rim: grazing angles on the lit side go bright, the classic sunlit
         // cumulus edge. Gated to the lit hemisphere so it can't halo the
         // shadow side.
@@ -264,10 +352,17 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
 
         s = clamp((s - 0.5) * uContrast + 0.5 - uBias, 0.0, 1.0);
 
-        // 多段階, applied to the low-frequency shading only.
-        float scaled = s * uTiers;
-        float tiered = (floor(scaled) + smoothstep(0.3, 0.7, fract(scaled))) / uTiers;
-        s = mix(s, tiered, uTierMix);
+        // 多段階 — four shadow steps, applied to the low-frequency shading
+        // only. The boundaries are deliberately *not* clean: a noise offset is
+        // added to the tier coordinate before it is quantised, so each step
+        // wanders rather than tracing a mathematical iso-line, and the
+        // smoothstep across the step is wide. That is the にじみ — a bled,
+        // irregular edge between shadow steps rather than a hard cel band or a
+        // continuous ramp.
+        float bleed = (fbm(vNoisePos * uTierBleedScale) - 0.5) * uTierBleed;
+        float scaled = (s + bleed) * uTiers;
+        float tiered = (floor(scaled) + smoothstep(0.5 - uTierSoft, 0.5 + uTierSoft, fract(scaled))) / uTiers;
+        s = mix(s, tiered - bleed, uTierMix);
 
         // Brush tooth goes on *after* the posterisation, not before. Measured
         // the other way round: inside a plateau the smoothstep is flat at both
@@ -342,6 +437,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         vNormalW = normalize(mat3(modelMatrix) * normalize(mat3(instanceMatrix) * normal));
         vec3 toCam = cameraPosition - worldPos.xyz;
         vDist = length(toCam);
+        vWorldPos = worldPos.xyz;
         vViewDirW = normalize(toCam);
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }`,
