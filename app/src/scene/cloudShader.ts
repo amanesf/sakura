@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createCloudRampTexture, sampleCloudRampHDR } from './cloudRamp';
+import { createCloudRampTexture } from './cloudRamp';
 import { CLOUD_SHADOW_GLSL } from './cloudShadow';
 
 /**
@@ -62,7 +62,6 @@ const NOISE_GLSL = /* glsl */ `
 
 export interface CloudMaterials {
   core: THREE.ShaderMaterial;
-  halo: THREE.ShaderMaterial;
 }
 
 /**
@@ -458,51 +457,33 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       }`,
   });
 
-  // The translucent fringe. Its colour is taken from the same measured ramp
-  // (upper-middle, where the reference's soft cloud edges actually sit)
-  // rather than being white — a white fringe over blue sky greys out the
-  // silhouette edge, which is what was veiling the whole cloud before.
-  const haloColor = sampleCloudRampHDR(0.72);
-  const halo = new THREE.ShaderMaterial({
-    uniforms: {
-      uColor: { value: new THREE.Vector3(haloColor.r, haloColor.g, haloColor.b) },
-      uOpacity: { value: 0.34 },
-      uFringePower: { value: 2.6 },
-    },
-    transparent: true,
-    depthWrite: false,
-    vertexShader: /* glsl */ `
-      varying vec3 vNormalW;
-      varying vec3 vViewDirW;
-      void main() {
-        vec4 instanced = instanceMatrix * vec4(position, 1.0);
-        vec4 worldPos = modelMatrix * instanced;
-        vNormalW = normalize(mat3(modelMatrix) * normalize(mat3(instanceMatrix) * normal));
-        vec3 toCam = cameraPosition - worldPos.xyz;
-        vViewDirW = normalize(toCam);
-        gl_Position = projectionMatrix * viewMatrix * worldPos;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uColor;
-      uniform float uOpacity;
-      uniform float uFringePower;
-      varying vec3 vNormalW;
-      varying vec3 vViewDirW;
-      void main() {
-        // Fade out face-on and keep only the grazing shell, so the fringe
-        // reads as wispy edge rather than a uniform fog dome over the puff.
-        // Exponent 2.6. This was widened to 0.9 to cure clouds meeting the sky
-        // at a hard polygon boundary, and overshot: measuring the 10-90%
-        // transition width all along the silhouette, 45% of this render's
-        // contour was soft (6px or wider) against the reference's 27%, and the
-        // median was 5px against its 3px. The reference's outline is mostly
-        // *crisp* — 39% of it resolves within 2px — with softness reserved for
-        // a minority of edges. Narrowing the shell restores that balance while
-        // keeping a real fringe rather than a bare polygon edge.
-        float edge = pow(1.0 - clamp(dot(normalize(vNormalW), normalize(vViewDirW)), 0.0, 1.0), uFringePower);
-        gl_FragColor = vec4(uColor, edge * uOpacity);
-      }`,
-  });
-
-  return { core, halo };
+  // There is deliberately no translucent fringe shell any more.
+  //
+  // It was a second, 1.15x-scaled sphere per lobe whose alpha was a Fresnel
+  // term, pow(1 - dot(N,V), k). On a sphere that term is *maximum exactly at
+  // the shell's outer limb* and falls away inward, so the fringe's outermost
+  // boundary was also its most opaque line. That is a hard-edged ring, which
+  // is precisely what read as a transparent sphere drawn around every lobe —
+  // the shape was inverted with respect to what a soft edge needs (a real
+  // translucent shell's optical depth goes to zero at its limb, because the
+  // chord through it does).
+  //
+  // Two further faults made it worse, and neither was fixable by retuning:
+  //
+  //  - No depth awareness. The shell drew wherever it passed the depth test,
+  //    so a lobe near the front of the cluster laid its whole ring across the
+  //    mass behind it, putting complete circles *inside* the silhouette where
+  //    there is no cloud/sky boundary at all.
+  //  - No aerial perspective, unlike the core. The far bank's cores correctly
+  //    dissolve toward the haze colour with distance, but their shells kept
+  //    full strength, so the shells outlived the cloud they belonged to and
+  //    floated in clear sky as detached bubbles (visible top-right of frame).
+  //
+  // And the measurement says the outline needed *less* softening, not better
+  // softening: 87.5% of this render's silhouette crossings were 6px or wider
+  // against the reference's 56.6%, at a median 16px against its 9px. The
+  // reference's contour is mostly crisp. Removing the shell therefore moves
+  // the fringe statistics toward the target rather than away from it, which
+  // is why the fix is a deletion rather than a rewrite.
+  return { core };
 }

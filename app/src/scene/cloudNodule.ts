@@ -70,25 +70,9 @@ export function buildNoduleGeometry(seed: number, flatten: number): THREE.Buffer
   return geometry;
 }
 
-/**
- * The halo used to be the *same* jagged silhouette as the core, just scaled
- * up — which doesn't read as a soft translucent fringe, it reads as a second,
- * slightly-offset copy of the same faceted outline (a visible double edge).
- * A soft fringe needs its own much-smoother, low-displacement shape so its
- * boundary blurs rather than echoes the core's.
- */
-export function buildHaloGeometry(seed: number, flatten: number): THREE.BufferGeometry {
-  const geometry = new THREE.SphereGeometry(1, 16, 10);
-  const position = geometry.attributes.position;
-  const v = new THREE.Vector3();
-  for (let i = 0; i < position.count; i++) {
-    v.fromBufferAttribute(position, i);
-    if (v.length() < 1e-6) continue;
-    const n = fbm3(v.x * 1.2, v.y * 1.2, v.z * 1.2, seed + 331.0, 2);
-    v.multiplyScalar(1 + n * 0.12);
-    position.setXYZ(i, v.x, v.y, v.z);
-  }
-  geometry.scale(1, 0.88 * flatten, 1);
-  geometry.computeVertexNormals();
-  return geometry;
-}
+// buildHaloGeometry() lived here: a deliberately smooth, low-displacement
+// sphere for the translucent fringe shell, kept smooth so its boundary would
+// blur rather than echo the core's faceted outline. That smoothness is exactly
+// what made the shell read as a sphere once it started rendering — see
+// cloudShader.ts for the full measurement and why the fringe was removed
+// rather than reshaped.

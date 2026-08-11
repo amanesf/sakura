@@ -119,9 +119,8 @@ interface AnimatedCluster {
 
 const clusters: AnimatedCluster[] = [];
 
-// The sky is a fullscreen quad that ignores the camera, so it would fill the
-// depth map entirely; the halos are translucent shells that would shadow their
-// own cores.
+// The sky is a fullscreen quad that ignores the camera, so it would otherwise
+// fill the light-space depth map entirely.
 const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
 
 function addCluster(
@@ -137,7 +136,6 @@ function addCluster(
 ): void {
   const handle = createCloudCluster(seed, center, baseAlt, topAltFull, levels, radiusProfile, puffsPerLevel, materials, CLOUD_LIGHT_DIR);
   scene.add(handle.group);
-  hiddenDuringShadowPass.push(handle.halo);
   clusters.push({
     handle,
     cycleSeconds,

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/buildNoise';
-import { buildNoduleGeometry, buildHaloGeometry } from './cloudNodule';
+import { buildNoduleGeometry } from './cloudNodule';
 import { createCloudMaterials, type CloudMaterials } from './cloudShader';
 
 export { createCloudMaterials };
@@ -36,10 +36,6 @@ interface Nodule {
 
 export interface CloudClusterHandle {
   group: THREE.Group;
-  /** Exposed so the light-space depth pass can hide it: the fringe is a
-   * translucent shell and would otherwise write a depth several percent in
-   * front of the solid core, pushing every lobe into its own shadow. */
-  halo: THREE.InstancedMesh;
   update: (elapsed: number, growth: number, windOffset: THREE.Vector2) => void;
 }
 
@@ -277,14 +273,6 @@ function coreGeometryFor(variant: number): THREE.BufferGeometry {
   return g;
 }
 
-let sharedHaloGeometry: THREE.BufferGeometry | null = null;
-function haloGeometryFor(): THREE.BufferGeometry {
-  if (!sharedHaloGeometry) sharedHaloGeometry = buildHaloGeometry(7.0, 1);
-  return sharedHaloGeometry;
-}
-
-const HALO_SCALE = 1.15;
-
 export function createCloudCluster(
   seed: number,
   centerXZ: THREE.Vector2,
@@ -312,12 +300,9 @@ export function createCloudCluster(
   // expensive part), but each cluster needs its own attribute buffers or
   // clusters would overwrite each other's occlusion values.
   const coreGeom = coreGeometryFor(Math.floor(seed) % 5).clone();
-  const haloGeom = haloGeometryFor();
 
   const coreMesh = new THREE.InstancedMesh(coreGeom, materials.core, nodules.length);
-  const haloMesh = new THREE.InstancedMesh(haloGeom, materials.halo, nodules.length);
-  haloMesh.renderOrder = 1;
-  group.add(coreMesh, haloMesh);
+  group.add(coreMesh);
 
   // Per-instance inputs to the shading term (see cloudShader.ts): how deeply
   // this puff sits in another puff's shadow, and a stable random offset so
@@ -371,17 +356,11 @@ export function createCloudCluster(
       s.set(coreScale * n.stretch.x, coreScale * n.stretch.y, coreScale * n.stretch.z);
       m.compose(p, q, s);
       coreMesh.setMatrixAt(i, m);
-
-      const haloScale = coreScale * HALO_SCALE;
-      s.set(haloScale * n.stretch.x, haloScale * n.stretch.y, haloScale * n.stretch.z);
-      m.compose(p, q, s);
-      haloMesh.setMatrixAt(i, m);
     }
     coreMesh.instanceMatrix.needsUpdate = true;
-    haloMesh.instanceMatrix.needsUpdate = true;
   }
 
   update(0, 1, new THREE.Vector2(0, 0));
 
-  return { group, halo: haloMesh, update };
+  return { group, update };
 }
