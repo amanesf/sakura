@@ -454,8 +454,12 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec2 windDrift = vec2(0.16, 0.05) * time;
     vec2 flow = curl2D(p.xz * 0.10 + time * 0.025) * 0.35;
     vec2 warped = p.xz + windDrift + flow;
+    // Softer than before — the reference image has almost no fine-grain texture,
+    // lit or shadowed, so heavy erosion here was adding a "grainy" quality the
+    // real target doesn't have. Keep just enough to avoid perfectly mathematical
+    // sphere edges, not enough to read as noise.
     float erosion = worley3D(vec3(warped * 0.35, altitude * 0.35));
-    return clamp(shape * clamp(1.3 - erosion * 1.4, 0.0, 1.0), 0.0, 1.0);
+    return clamp(shape * clamp(1.15 - erosion * 0.6, 0.0, 1.0), 0.0, 1.0);
   }
 
   // Smooth surface normal from the *shape* field's gradient (not the eroded
@@ -475,6 +479,28 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec3 n = vec3(dx, dy, dz);
     float len = length(n);
     return len < 1e-5 ? vec3(0.0, 1.0, 0.0) : n / len;
+  }
+
+  // Crevice ambient occlusion — a density-field adaptation of Inigo Quilez's
+  // cheap SDF-AO trick (step outward along the normal a few times; if the field
+  // is still "full" nearby, something else is curving in close, so darken).
+  // This is the actual fix for what re-examining the reference image showed: its
+  // dominant shadow pattern isn't a sun-relative light/dark split, it's dark
+  // *creases where adjacent lobes meet* — an inherently local, direction-
+  // independent cavity signal that plain N·L can never produce no matter how
+  // it's tuned, because N·L only encodes which way one point's normal happens to
+  // face, not whether a neighboring lobe is crowding it.
+  float cloudAO(vec3 p, vec3 normal, float time) {
+    float occlusion = 0.0;
+    float weight = 1.0;
+    for (int i = 1; i <= 4; i++) {
+      float h = 0.09 * float(i);
+      float dummy;
+      float d = cloudShape(p + normal * h, time, dummy);
+      occlusion += d * weight;
+      weight *= 0.72;
+    }
+    return clamp(1.0 - occlusion * 1.1, 0.0, 1.0);
   }
 
   const int CLOUD_STEPS = 80;
@@ -542,44 +568,33 @@ const FRAGMENT_SHADER = /* glsl */ `
       float density = cloudDensity(samplePos, time, isTower);
       if (density <= 0.001) continue;
 
-      // Primary shading driver: N·L against a *smooth* surface normal (the
-      // gradient of the un-eroded shape field), toon-quantized — this is the
-      // actual fix for the speckling. The previous version posterized the
-      // volumetric self-shadow value directly, but that value is inherently
-      // noisy (a march through the same fractal density field the shape is made
-      // of), so quantizing it just turned continuous noise into discrete salt-
-      // and-pepper. A density-gradient normal is coherent by construction, the
-      // same way a toon-shaded 3D model's surface normal is — anime cloud
-      // painting shades an implicit smooth solid, not a participating medium.
+      // Re-examining the reference image closely changed the diagnosis: its
+      // dominant shadow pattern is dark *creases between adjacent lobes*, not a
+      // sun-relative light/dark hemisphere split — and it has almost no fine
+      // grain/texture anywhere, lit or shadowed. Both the old N·L-primary model
+      // and the added brush-noise texture were fighting that. Crevice AO
+      // (cloudAO) is now the primary shading signal; N·L only supplies a mild
+      // secondary tilt (sunward side reads a little brighter), matching how the
+      // reference stays luminous even in "shadow."
       vec3 normal = cloudNormal(samplePos, time);
-      float NdotL = dot(normal, sunDir);
+      float ao = cloudAO(samplePos, normal, time);
 
-      // 厚塗り (thick-paint) research: the boundary between tones in real brush
-      // painting is never a mathematically perfect curve — it's built from
-      // overlapping opaque strokes, so the edge is ragged/irregular, and the
-      // inside of each tone zone still carries visible stroke-to-stroke texture
-      // rather than being perfectly flat. A pure posterizeSoft(NdotL) boundary is
-      // a geometrically perfect isoline of the smooth normal field, which is
-      // exactly what reads as "not hand-painted." Perturbing the posterize input
-      // with mid-frequency noise breaks that boundary up into an irregular, brush-
-      // like edge instead.
-      float brushNoise = fbm3D(samplePos * 0.8, 3) - 0.5;
-      float paintedTone = clamp(NdotL * 0.5 + 0.5 + brushNoise * 0.22, 0.0, 1.0);
+      vec3 artDirectedLightDir = normalize(mix(sunDir, vec3(0.0, 1.0, 0.0), 0.35));
+      float NdotL = dot(normal, artDirectedLightDir);
+      float directionalTilt = mix(0.82, 1.0, NdotL * 0.5 + 0.5);
+
+      float paintedTone = clamp(ao * directionalTilt, 0.0, 1.0);
       // 4 bands, not 3 — the cloud-painting research describes base/midtone/dark/
       // highlight as four distinct tonal steps, not three.
       float shadow = posterizeSoft(paintedTone, 4.0);
-      // Fine texture *within* a tone zone (stroke-to-stroke value variation,
-      // rather than one flat fill) — applied after quantization so it doesn't
-      // fight the tonal steps, just roughens each one.
-      float strokeTexture = 1.0 + (fbm3D(samplePos * 2.4, 3) - 0.5) * 0.14;
 
       // Cast shadow from other cloud mass (e.g. a tower's own overhang darkening
       // what's beneath it) stays as a *continuous* secondary multiplier — folding
       // it back in post-quantization, rather than quantizing it itself, keeps the
-      // coherent N·L boundary as the dominant visual read while still letting
+      // coherent boundary as the dominant visual read while still letting
       // genuinely-occluded pockets go darker.
       float castShadow = lightMarch(samplePos, sunDir, time);
-      float shadeFactor = shadow * mix(0.6, 1.0, castShadow);
+      float shadeFactor = shadow * mix(0.7, 1.0, castShadow);
 
       float a = 1.0, b = 1.0, c = 1.0;
       float lightEnergy = 0.0;
@@ -603,7 +618,7 @@ const FRAGMENT_SHADER = /* glsl */ `
       vec3 litColor = baseCloudColor * shadowMultiply;
       float highlightMask = smoothstep(0.68, 1.0, shadow);
       vec3 highlightAdd = vec3(0.35, 0.28, 0.14) * highlightMask;
-      vec3 sunColor = (litColor + highlightAdd) * strokeTexture;
+      vec3 sunColor = litColor + highlightAdd;
       vec3 highlightTint = vec3(1.15, 1.02, 0.78);
 
       // Silver lining: a thin, still-mostly-transparent (high running
