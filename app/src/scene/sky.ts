@@ -130,7 +130,15 @@ const FRAGMENT_SHADER = /* glsl */ `
     vec2 groundHit = raySphere(ro, rd, PLANET_CENTER, PLANET_RADIUS);
     float rayLength = atmosHit.y;
     bool hitsGround = groundHit.x > 0.0;
-    if (hitsGround) rayLength = min(rayLength, groundHit.x);
+    // Deliberately *not* shortened to the ground hit. Stopping the integral
+    // at the planet surface is the physically correct thing to do, but just
+    // below the horizon the ground distance collapses very fast, so the
+    // atmospheric path — and with it the radiance — falls off a cliff over a
+    // few pixels. That produced a black band hugging the horizon, darker than
+    // the ground beneath it. Since the ground here is only a placeholder for a
+    // foreground layer that will cover it (plan.md §5), the integral is left
+    // at full atmospheric length so the value stays continuous across the
+    // horizon, and the ground is applied purely as a tint below.
 
     vec3 skyTransmittance;
     vec3 skyColor = integrateAtmosphere(ro, rd, sunDir, max(rayLength, 0.001), skyTransmittance);
@@ -140,9 +148,18 @@ const FRAGMENT_SHADER = /* glsl */ `
     skyColor += skyTransmittance * SUN_INTENSITY * sunDisc * 80.0;
 
     if (hitsGround) {
-      // Ground is out of scope here (composited foreground layer covers it later,
-      // plan.md §5) — a flat placeholder tint keeps the horizon from looking broken.
-      skyColor = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.9);
+      // Ground is out of scope here (a composited foreground layer covers it
+      // later, plan.md §5), but a flat tint applied at full strength right up
+      // to the horizon put a hard dark line across the frame that dominated
+      // every test render. Fading it in with the downward view angle lets the
+      // ground emerge out of the horizon haze instead, which is both what
+      // aerial perspective actually does at that distance and far less
+      // distracting while the sky is what is being judged.
+      // NB smoothstep's edges must be given in increasing order — passing
+      // them reversed is undefined in GLSL.
+      float below = 1.0 - smoothstep(-0.07, 0.0, rd.y);
+      vec3 land = mix(skyColor, vec3(0.05, 0.07, 0.06), 0.92);
+      skyColor = mix(skyColor, land, below);
     }
 
     // Left in linear HDR, no manual tonemapping/gamma here — now that main.ts

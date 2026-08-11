@@ -87,7 +87,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far a puff nestled among neighbours is pushed down the ramp.
       // Measured target: ~48% of the reference's cloud interior sits below
       // luminance 205, so this has to be assertive, not a subtle tint.
-      uOcclusion: { value: 0.4 },
+      uOcclusion: { value: 0.34 },
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
@@ -103,8 +103,8 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uTierMix: { value: 0.7 },
       uTerminator: { value: 0.68 },
       uPerLobeTint: { value: 0.13 },
-      uDetailFocus: { value: 0.55 },
-      uHighlightKnee: { value: 0.915 },
+      uDetailFocus: { value: 0.76 },
+      uHighlightKnee: { value: 0.865 },
       uHighlightGain: { value: 0.9 },
       // Bright enough to clip to 255 through ACES at exposure 1.2 (anything
       // past ~10 saturates), but not so far past it that the bloom threshold
@@ -138,7 +138,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // light-facing weight both push up), so without this the whole render
       // rides high: measured median luminance 217 against the reference's 207,
       // and only 33% of area below luminance 205 where the reference has 48%.
-      uBias: { value: -0.03 },
+      uBias: { value: -0.06 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;

@@ -97,7 +97,11 @@ function buildPuffCluster(
     const clumps: { x: number; z: number; spread: number; weight: number }[] = [];
     for (let k = 0; k < clumpCount; k++) {
       const ca = rand() * Math.PI * 2;
-      const cr = Math.pow(rand(), 0.55) * radius * 0.75;
+      // Reach out to nearly the full band radius (was 0.75). Clump centres
+      // clustered near the axis left the outer part of every band thinly
+      // populated, so the mass came out narrower than its own radius profile
+      // and the tower read as a column whatever that profile said.
+      const cr = Math.pow(rand(), 0.5) * radius * 0.95;
       clumps.push({
         x: Math.cos(ca) * cr,
         z: Math.sin(ca) * cr,

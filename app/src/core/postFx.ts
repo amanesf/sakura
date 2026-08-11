@@ -32,7 +32,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // source and the measured tonal separation immediately washed back out.
   // 7.0 sits just under the ramp's top entry (8.16), so only the genuinely
   // sunlit crown blooms rather than every lit lobe cap.
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.07, 0.6, 7.0);
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.045, 0.65, 8.2);
   composer.addPass(bloomPass);
 
   const gradePass = new ShaderPass(GradeShader);

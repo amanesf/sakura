@@ -57,15 +57,19 @@ const CLOUD_BASE_ALT = 1.4;
 // core/camera.ts for how TOWER_CENTER was solved from the reference image's
 // measured screen position).
 const TOWER_CENTER = new THREE.Vector2(5.5, -16.0);
-const TOWER_TOP_ALT = 9.6;
-const TOWER_RADIUS = 4.0;
+const TOWER_TOP_ALT = 10.8;
+const TOWER_RADIUS = 4.3;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
-  const bump = Math.max(0, 1 - Math.abs(t * 2 - 0.7) ** 1.3);
-  // Floor raised 0.5→0.68: the reference tower stays visually chunky right up
-  // to its crown — no thin "neck" anywhere — so the taper toward top/base
-  // needs to be gentler than the profile that made the neck gap visible.
-  return TOWER_RADIUS * THREE.MathUtils.lerp(0.68, 1.15, bump);
+  // An explicit three-part silhouette rather than a single symmetric bump.
+  // A symmetric profile makes the tower an ellipsoid — widest in the middle
+  // and equally tapered at both ends — which rendered as a boulder, not as
+  // 入道雲. A cumulonimbus is not symmetric about its waist: it flares
+  // quickly off a fairly narrow base, holds a broad shoulder through most of
+  // its body, then draws in toward a cauliflower crown.
+  const flare = THREE.MathUtils.smoothstep(t, 0.0, 0.24);
+  const crown = 1 - THREE.MathUtils.smoothstep(t, 0.52, 1.0) * 0.58;
+  return TOWER_RADIUS * (0.58 + 0.62 * flare) * crown;
 }
 
 interface AnimatedCluster {
@@ -114,7 +118,7 @@ function addCluster(
 // against the reference image's measured screen coordinates, see camera.ts) —
 // letting it drift on the same wind budget as decorative background cumulus
 // carried it out of frame within seconds. It still sways, just gently.
-addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 18, 16, TOWER_CYCLE_SECONDS, 0.05);
+addCluster(TOWER_CENTER.x + TOWER_CENTER.y, TOWER_CENTER, TOWER_TOP_ALT, towerRadiusProfile, 22, 15, TOWER_CYCLE_SECONDS, 0.05);
 
 // A handful of smaller cumulus scattered around the tower
 // (plan.md: 「雲は入道雲だけじゃないしさ」) — deterministic seeded positions,
