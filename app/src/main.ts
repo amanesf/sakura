@@ -2,6 +2,7 @@ import './style.css';
 import * as THREE from 'three';
 import { createRenderer, watchResize } from './core/renderer';
 import { createCamera } from './core/camera';
+import { visibleRect, applyToCamera, toUvRect } from './core/frame';
 import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials, createCloudCluster, type CloudClusterHandle } from './scene/clouds';
 import { sunDirection } from './core/solarPosition';
@@ -19,7 +20,15 @@ const sky = createSky();
 scene.add(sky.mesh);
 
 const postFx = createPostFx(renderer, scene, camera);
-watchResize(renderer, camera, (w, h) => postFx.setSize(w, h));
+watchResize(renderer, camera, (w, h) => {
+  postFx.setSize(w, h);
+  // The plate and the 3D camera get the same sub-rect of the reference's
+  // 1408x768 frame, so the painted window frames stay registered to the sky
+  // whatever shape the viewport is (core/frame.ts).
+  const rect = visibleRect(w / h);
+  applyToCamera(camera, rect);
+  postFx.setPlateRect(toUvRect(rect));
+});
 
 // plan.md: 「まず日中だけでいい」— time-of-day t is fixed at 0 (day) for now.
 const TIME_OF_DAY_T = 0;

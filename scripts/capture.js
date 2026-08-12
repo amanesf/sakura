@@ -15,8 +15,12 @@ const path = require('path');
 
 const OUT = process.argv[2] || '/tmp/shot.png';
 const T = process.argv[3] || '0';
-const WIDTH = 1408;
-const HEIGHT = 768;
+// Defaults are the reference image's frame, which every measurement script
+// assumes. CAPTURE_W/CAPTURE_H override it to check other viewport shapes —
+// notably the Pixel 10 Pro's 998x448 landscape, where core/frame.ts crops the
+// frame instead of stretching it.
+const WIDTH = Number(process.env.CAPTURE_W || 1408);
+const HEIGHT = Number(process.env.CAPTURE_H || 768);
 const PORT = 5199;
 
 function waitForServer(proc) {

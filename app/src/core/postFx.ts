@@ -7,9 +7,11 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { GradeShader } from '../effects/gradeShader';
 import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
+import { PlateShader } from '../effects/plateShader';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
+  setPlateRect: (rect: THREE.Vector4) => void;
   render: () => void;
 }
 
@@ -68,6 +70,21 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const macroPass = new MacroContrastPass(window.innerWidth, window.innerHeight);
   composer.addPass(macroPass);
 
+  // The foreground plate goes on last — see effects/plateShader.ts for why
+  // nothing may run after it.
+  const plateTexture = new THREE.TextureLoader().load('plate.webp');
+  // The buffer at this point is already display-space sRGB (OutputPass ran
+  // several passes ago), so the plate must be sampled raw. Tagging it
+  // SRGBColorSpace would have the sampler linearise it into a buffer that is
+  // not linear, washing the illustration out.
+  plateTexture.colorSpace = THREE.NoColorSpace;
+  plateTexture.minFilter = THREE.LinearFilter;
+  plateTexture.magFilter = THREE.LinearFilter;
+  plateTexture.generateMipmaps = false;
+  const platePass = new ShaderPass(PlateShader);
+  platePass.uniforms.tPlate.value = plateTexture;
+  composer.addPass(platePass);
+
   const setSize = (width: number, height: number) => {
     composer.setSize(width, height);
     kuwaharaPass.setSize(width, height);
@@ -76,5 +93,9 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     gradePass.uniforms.uAspect.value = width / height;
   };
 
-  return { setSize, render: () => composer.render() };
+  const setPlateRect = (rect: THREE.Vector4) => {
+    platePass.uniforms.uPlateRect.value.copy(rect);
+  };
+
+  return { setSize, setPlateRect, render: () => composer.render() };
 }
