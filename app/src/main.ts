@@ -215,7 +215,7 @@ const controls = createControls(initial);
 let appliedCloud = -1;
 let appliedHour = Number.NaN;
 
-function applyControls(simTime: number): void {
+function applyControls(rainTime: number): void {
   const cloud = controls.cloudAmount();
   if (cloud !== appliedCloud) {
     appliedCloud = cloud;
@@ -247,7 +247,7 @@ function applyControls(simTime: number): void {
     skyDusk = daylight.dusk;
   }
 
-  postFx.setRain(controls.rainAmount(), simTime);
+  postFx.setRain(controls.rainAmount(), rainTime);
 }
 
 // Simulated seconds. Every cluster's position, age and weather is a pure
@@ -271,15 +271,33 @@ function applyControls(simTime: number): void {
 const frozen = query.get('t');
 let frozenTime: number | null = frozen !== null ? Number(frozen) : null;
 let simTime = frozenTime ?? Math.random() * 200000;
+
+// The drops' own clock, in *real* seconds — see effects/rainShader.ts.
+//
+// The speed slider exists so that a cloud tower's ten-minute life can be
+// watched in under a minute, and that is a statement about how fast the
+// weather changes. A raindrop's fall speed is not a property of the weather
+// changing, so it does not belong on that clock: at the default 10x the drops
+// were falling ten times too fast for their own size, and at 30x they were a
+// different phenomenon altogether.
+//
+// Frozen with `?t=` like everything else, so scripts/capture.js still gets the
+// same frame twice.
+let rainTime = frozenTime ?? 0;
 const clock = new THREE.Clock();
 
 function renderLoop() {
   requestAnimationFrame(renderLoop);
   const dt = clock.getDelta();
-  if (frozenTime === null) simTime += dt * controls.timeScale();
-  else simTime = frozenTime;
+  if (frozenTime === null) {
+    simTime += dt * controls.timeScale();
+    rainTime += dt;
+  } else {
+    simTime = frozenTime;
+    rainTime = frozenTime;
+  }
 
-  applyControls(simTime);
+  applyControls(rainTime);
   updateSky(sky, camera, sunDir, skyDusk);
   cloudField.update(simTime);
 
@@ -315,6 +333,7 @@ function renderLoop() {
     if (params.t !== undefined) {
       frozenTime = params.t;
       simTime = params.t;
+      rainTime = params.t;
     }
     for (const key of ['cloud', 'rain', 'hour'] as const) {
       const value = params[key];

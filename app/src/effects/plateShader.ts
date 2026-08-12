@@ -24,6 +24,34 @@ export const PlateShader = {
     /** Illuminant for the painted plate — white at noon. See the fragment
      * shader below and core/daylight.ts. */
     uDayTint: { value: new THREE.Vector3(1, 1, 1) },
+    /**
+     * Linear-light exposure for the painted plate, 1 when it is dry.
+     *
+     * The plate is 60.5% of the frame — the room, the girl, the window frames,
+     * and the hills, town and sea seen through the glass — and until now not
+     * one pixel of it changed when it rained. Measured at cloud=100%, rain=100%
+     * that put the painted town strip at luminance 142.5 against a storm sky at
+     * 96.7: **the sunlit town was 47% brighter than the downpour above it**, so
+     * it became the brightest, most saturated thing in the picture and took the
+     * eye straight off the sky and the girl. A warm noon sunbeam also stayed
+     * lying across the classroom floor throughout.
+     *
+     * Darkening the whole plate is not a cheat to hide that, it is the physics:
+     * this room has no light of its own, every photon in it came through those
+     * windows, and when the sky goes down a stop and a half the room goes with
+     * it. So this tracks the sky's own exposure (effects/rainShader.ts's
+     * uExposure) rather than being dialled by eye.
+     *
+     * What this deliberately does *not* do is aerial perspective. The distant
+     * town should also fade into the murk, and that is a function of its depth,
+     * which a flat painting does not carry — it needs the "outside the window"
+     * matte improvements.md §1.2 asks for, and a hand key to separate the town
+     * from the girl standing in front of it (a geometric derivation from the
+     * sky matte puts rain on her back). Darkening is the part that is honestly
+     * available without that asset, and it is the part that fixes the tonal
+     * hierarchy.
+     */
+    uRainExposure: { value: 1 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -43,12 +71,22 @@ export const PlateShader = {
     // unaffected. Only the plate is multiplied: the rendered sky and clouds
     // have already had the hour applied by their own shaders.
     uniform vec3 uDayTint;
+    uniform float uRainExposure;
     varying vec2 vUv;
 
     void main() {
       vec4 sky = texture2D(tDiffuse, vUv);
       vec4 plate = texture2D(tPlate, uPlateRect.xy + vUv * uPlateRect.zw);
-      gl_FragColor = vec4(mix(sky.rgb, plate.rgb * uDayTint, plate.a), 1.0);
+      vec3 painted = plate.rgb * uDayTint;
+      // In linear light, for the same reason the sky's exposure is: a scale
+      // applied to display-space numbers is a contrast curve, not a change of
+      // light, and it would flatten the painting exactly the way the old rain
+      // wash flattened the sky. Exactly identity at uRainExposure = 1, so the
+      // dry frame stays byte-for-byte what every statistic was measured on.
+      if (uRainExposure < 1.0) {
+        painted = pow(max(pow(max(painted, 0.0), vec3(2.2)) * uRainExposure, 0.0), vec3(1.0 / 2.2));
+      }
+      gl_FragColor = vec4(mix(sky.rgb, painted, plate.a), 1.0);
     }
   `,
 };

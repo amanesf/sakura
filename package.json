@@ -1,8 +1,9 @@
 {
   "name": "sakura-art-source",
   "private": true,
-  "description": "Root-level tooling for generating/processing art assets (scripts/gemini_call.js). The previous 幻想桜暦 project (app/, art-source/, proposal.md, season-transition-animation.md) has been archived under bk/; the current app lives in app/.",
+  "description": "Root-level tooling: the measure loop (scripts/README.md) and art-asset generation (scripts/gemini_call.js). The previous 幻想桜暦 project (app/, art-source/, proposal.md, season-transition-animation.md) has been archived under bk/; the current app lives in app/.",
   "dependencies": {
+    "playwright": "^1.62.1",
     "sharp": "^0.35.3"
   }
 }

@@ -33,8 +33,14 @@ export interface PostFx {
   /** Apply the hour to everything in the post chain that was authored for
    * midday: the painted plate, and the horizon haze band. */
   setDaylight: (day: Daylight) => void;
-  /** Rain, 0-1, and the clock it falls on (simTime, so captures reproduce). */
-  setRain: (amount: number, simTime: number) => void;
+  /**
+   * Rain, 0-1, and the clock the drops fall on.
+   *
+   * That clock is *not* simTime — see effects/rainShader.ts's uRainTime. It is
+   * real seconds, pinned to `?t=` when the scene is frozen so captures still
+   * reproduce.
+   */
+  setRain: (amount: number, rainTime: number) => void;
   /** The visible sub-rect of the reference's frame — drives both the plate's UVs
    * and where the horizon haze band sits (core/frame.ts). */
   setFrameRect: (rect: FrameRect) => void;
@@ -158,10 +164,17 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     horizonPass.uniforms.uHazeColor.value.set(haze.r, haze.g, haze.b);
   };
 
-  const setRain = (amount: number, simTime: number) => {
+  const setRain = (amount: number, rainTime: number) => {
     rainPass.enabled = amount > 0.001;
     rainPass.uniforms.uRain.value = amount;
-    rainPass.uniforms.uTime.value = simTime;
+    rainPass.uniforms.uRainTime.value = rainTime;
+    // The room and the town lose the light along with the sky, and by the same
+    // amount, because they are lit *by* it — see effects/plateShader.ts. Read
+    // off the rain pass's own uniform rather than repeating the number here:
+    // the two being equal is the physical claim, so they should not be able to
+    // drift apart.
+    const skyExposure = rainPass.uniforms.uExposure.value as number;
+    platePass.uniforms.uRainExposure.value = 1 + (skyExposure - 1) * Math.min(Math.max(amount, 0), 1);
   };
 
   // The painted sea horizon sits at y=593 of the 1408x768 frame (measured), and
