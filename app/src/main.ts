@@ -105,7 +105,7 @@ const TOWER_TOP_ALT = 10.8;
 // number of pixels regardless of mass size). Calibrating on those two measured
 // points instead — 8.0°/km at the shoulder — puts the reference's 10.5° at
 // 2.21km. The old 4.3 was still nearly twice that.
-const TOWER_RADIUS = 2.2;
+const TOWER_RADIUS = 2.35;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
   // An explicit three-part silhouette rather than a single symmetric bump.
@@ -135,8 +135,13 @@ function towerRadiusProfile(t: number): number {
   // 0.81 → 2.15km, 0.90 → 1.97km. So the reference tower is far more
   // columnar than a taper from a wide base, holding close to full width from
   // the shoulder up to 0.9 and only drawing in at the crown.
-  const shoulder = 0.62 + 0.38 * THREE.MathUtils.smoothstep(t, 0.5, 0.78);
-  const crown = 1 - 0.55 * THREE.MathUtils.smoothstep(t, 0.85, 1.02);
+  // Re-measured after the 2.2 calibration capture (ref → render, angular
+  // width per band): 25.5° 10.5°→6.9°, 28.1° 9.7°→6.9°, 22.8° 7.8°→6.7°,
+  // but 33.0° 1.9°→7.7°. So the body is still too narrow while the crown is
+  // four times too wide — the taper has to be pushed into the top ~12% of the
+  // height instead of spread over the upper third.
+  const shoulder = 0.6 + 0.4 * THREE.MathUtils.smoothstep(t, 0.45, 0.72);
+  const crown = 1 - 0.78 * THREE.MathUtils.smoothstep(t, 0.88, 1.0);
   return TOWER_RADIUS * shoulder * crown;
 }
 
@@ -262,7 +267,11 @@ for (const c of SMALL_CUMULUS) {
 // The far tier keeps the horizon band populated but is the only tier that
 // reaches it, which is what brings 0-4° back down toward the reference.
 const BANK_TIERS = [
-  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 4.6, topHi: 6.2, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
+  // topHi lifted 6.2 → 7.4 (18.6° at 22km, was 15.7°) to close a measured gap
+  // at 20.1°, where the render sat at 13.5% against the reference's 25.0%:
+  // that band fell between the tower's shoulder and the deck's top and had
+  // nothing in it at all.
+  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 5.2, topHi: 7.4, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
   { count: 16, zNear: 30, zSpan: 11, baseAlt: 2.2, topLo: 5.0, topHi: 8.2, radLo: 4.0, radHi: 7.5, xStep: 6.0, wind: 0.4 },
   { count: 14, zNear: 55, zSpan: 21, baseAlt: 1.6, topLo: 3.2, topHi: 5.4, radLo: 5.0, radHi: 9.0, xStep: 8.0, wind: 0.25 },
 ];
