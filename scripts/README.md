@@ -197,3 +197,26 @@ through the post chain under SwiftShader — so the two levers that matter are:
 
 `capture.js` is still the right tool for a single frame or for anything that
 needs the cold-start path.
+
+# scripts/duskref.js — measuring an evening or rain reference
+
+```sh
+node scripts/duskref.js Screenshot_20260813-045658.png 16 225 848 1400
+```
+
+What `skyprofile.js` does for the midday reference, for the images that describe
+the hours the midday fit says nothing about. Pass the crop: a phone screenshot
+is mostly browser chrome, and chrome is what a naive histogram will describe.
+
+It reports the sky's colour in twelve bands top to bottom, and the cloud colours
+at luminance percentiles — the same *indexed by population* shape that
+`scene/cloudRamp.ts` is built from, so the two can be compared directly.
+
+Sky and cloud are separated without a mask: at dusk the sky is the darker and
+more saturated of the two and the clouds are the brighter, and that ordering
+holds down the whole frame even as both change colour completely.
+
+Convert anything you take from it with `scripts/hdr.js --to-hdr` before putting
+it in a shader — every colour constant in `sky.ts` and `cloudShader.ts` lives in
+pre-tonemap linear HDR, and sRGB numbers dropped in raw are a recurring bug in
+this project.

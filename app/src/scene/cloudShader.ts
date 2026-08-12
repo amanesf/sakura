@@ -299,11 +299,17 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       //
       // A deck thick enough to close the sky is thick enough to stop the sun,
       // so its base is lit only by light that has been scattered many times on
-      // its way through — which is both darker and much less coloured than
-      // direct light. That is a statement about the illumination, not about the
-      // palette, so it belongs here as a global rather than as an edit to the
-      // measured table.
+      // its way through — which is darker than direct light, and *bluer*, not
+      // greyer. Multiple scattering through a deep cloud is still Rayleigh-
+      // and droplet-scattered daylight; it has lost the sun, not the sky.
+      //
+      // The first version desaturated toward grey and the result was lead. The
+      // colour below is measured off a rain-sky reference
+      // (Screenshot_20260813-053823.png, scripts/duskref.js): its dark cloud
+      // sits around sRGB(26,58,88), which is this in the linear HDR the shader
+      // works in, normalised to luminance 1 so it carries hue alone.
       uOvercast: { value: 0 },
+      uOvercastTint: { value: new THREE.Vector3(0.466, 1.067, 1.910) },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -393,6 +399,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform vec3 uSkyTint;
       uniform float uDayBlend;
       uniform float uOvercast;
+      uniform vec3 uOvercastTint;
 
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
@@ -606,8 +613,13 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // Overcast: multiply-scattered light only. Applied before the hour,
         // because it is about how the light reaches the cloud and the hour is
         // about what colour that light is.
-        float overcastGrey = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        color = mix(color, mix(color, vec3(overcastGrey), 0.55) * 0.45, uOvercast);
+        //
+        // Relit rather than desaturated — keep how bright the cloud is, take
+        // the colour of the light that is actually reaching it. Desaturating
+        // toward grey was the first attempt and produced exactly the lead sky
+        // the reference does not have.
+        float overcastLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        color = mix(color, overcastLum * uOvercastTint * 0.52, uOvercast);
 
         // Relight for the hour. Applied last, to everything — the white crown
         // and the hazed distance are as much a part of an evening as the ramp

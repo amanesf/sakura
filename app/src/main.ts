@@ -142,6 +142,7 @@ const CLOUD_LIGHT_DIR = LIGHT_QUERY
 // CLOUD_LIGHT_DIR above stays the *noon* value it was fitted as; cloudLight is
 // what the scene is actually shaded with, and the two are equal at 12:00.
 const sunDir = new THREE.Vector3();
+let skyDusk = 0;
 const cloudLight = CLOUD_LIGHT_DIR.clone();
 
 // No THREE.Light in the scene any more: the cloud material is unlit and
@@ -243,6 +244,7 @@ function applyControls(simTime: number): void {
     materials.core.uniforms.uDayBlend.value = daylight.blend;
     cloudShadow.setLightDirection(cloudLight);
     postFx.setDaylight(daylight);
+    skyDusk = daylight.dusk;
   }
 
   postFx.setRain(controls.rainAmount(), simTime);
@@ -278,7 +280,7 @@ function renderLoop() {
   else simTime = frozenTime;
 
   applyControls(simTime);
-  updateSky(sky, camera, sunDir);
+  updateSky(sky, camera, sunDir, skyDusk);
   cloudField.update(simTime);
 
   // After the clusters have moved, before anything is shaded with it.

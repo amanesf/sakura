@@ -28,6 +28,7 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform mat4 uCameraInverseProjection;
   uniform mat4 uCameraWorldMatrix;
   uniform vec3 uSunDirection;
+  uniform float uDusk;
 
   const float PI = 3.14159265359;
 
@@ -346,6 +347,52 @@ const FRAGMENT_SHADER = /* glsl */ `
     float skyLuma = dot(skyColor, vec3(0.2126, 0.7152, 0.0722));
     skyColor = mix(vec3(skyLuma), skyColor, mix(1.0, SKY_SATURATION, horizonFade));
 
+    // --- Dusk ---------------------------------------------------------
+    //
+    // Everything above is fitted, at RMSE 3.1, against a *midday* reference.
+    // The moment the sun drops it is extrapolating, and measuring what it
+    // extrapolated to showed how far off it was: at 18:36 the rendered sky
+    // still ran luminance 107 at the top of the frame and 173 near the horizon,
+    // against 181 at noon. The sun had all but set and the sky had given up
+    // eight levels.
+    //
+    // So dusk gets its own target, measured off an evening reference the user
+    // supplied (Screenshot_20260813-045658.png; scripts/duskref.js does the
+    // measuring). The numbers below are that image's own sky, sampled in twelve
+    // bands from the top of the frame down, converted from sRGB into the linear
+    // HDR this shader works in (scripts/hdr.js) and normalised to luminance 1
+    // so they carry hue only:
+    //
+    //   band          measured sRGB   luminance  linear chroma
+    //   top            15, 43, 57         38     0.43, 1.11, 1.58   deep teal
+    //   upper          34, 92,125         82     0.35, 1.11, 1.84   blue
+    //   lower         101,105,149        107     0.89, 0.95, 1.83   blue-violet
+    //   horizon       123, 65, 79         78     1.95, 0.72, 0.95   dusty rose
+    //
+    // The top being *teal* rather than blue is the thing this was most wrong
+    // about, and it is not an artistic liberty: at that hour the light reaching
+    // the upper sky has crossed enough ozone for the Chappuis band to take a
+    // bite out of the orange, which is what turns a twilight zenith green-blue.
+    // This shader has no ozone term, so the colour is supplied directly.
+    //
+    // Gated by uDusk, which is 0 in full day — the midday fit is untouched.
+    if (uDusk > 0.001) {
+      vec3 chroma = vec3(1.954, 0.722, 0.948);
+      chroma = mix(chroma, vec3(0.889, 0.949, 1.830), smoothstep(-0.02, 0.11, rd.y));
+      chroma = mix(chroma, vec3(0.351, 1.108, 1.842), smoothstep(0.11, 0.30, rd.y));
+      chroma = mix(chroma, vec3(0.428, 1.111, 1.583), smoothstep(0.30, 0.55, rd.y));
+
+      // Warm again toward the sun itself, which the elevation ramp alone cannot
+      // know about — the reference's glow is around the sun, not merely low.
+      float toSun = max(dot(rd, sunDir), 0.0);
+      chroma = mix(chroma, vec3(1.954, 0.722, 0.948), pow(toSun, 6.0) * 0.8);
+
+      // And far darker. The reference's sky runs luminance 38 at the top and
+      // 78-107 low down, roughly a third of what this shader was producing.
+      float duskLuma = dot(skyColor, vec3(0.2126, 0.7152, 0.0722));
+      skyColor = mix(skyColor, chroma * duskLuma * 0.42, uDusk);
+    }
+
     gl_FragColor = vec4(max(skyColor, 0.0), 1.0);
   }
 `;
@@ -357,6 +404,7 @@ export function createSky(): SkyHandle {
       uCameraInverseProjection: { value: new THREE.Matrix4() },
       uCameraWorldMatrix: { value: new THREE.Matrix4() },
       uSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      uDusk: { value: 0 },
     },
     vertexShader: VERTEX_SHADER,
     fragmentShader: FRAGMENT_SHADER,
@@ -369,7 +417,13 @@ export function createSky(): SkyHandle {
   return { mesh, material };
 }
 
-export function updateSky(handle: SkyHandle, camera: THREE.PerspectiveCamera, sunDir: THREE.Vector3): void {
+export function updateSky(
+  handle: SkyHandle,
+  camera: THREE.PerspectiveCamera,
+  sunDir: THREE.Vector3,
+  dusk = 0,
+): void {
+  handle.material.uniforms.uDusk.value = dusk;
   handle.material.uniforms.uCameraInverseProjection.value.copy(camera.projectionMatrixInverse);
   handle.material.uniforms.uCameraWorldMatrix.value.copy(camera.matrixWorld);
   handle.material.uniforms.uSunDirection.value.copy(sunDir);

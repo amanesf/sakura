@@ -38,9 +38,21 @@ export const RainShader = {
     uRain: { value: 0 },
     uTime: { value: 0 },
     uAspect: { value: 1 },
-    /** What a rained-out sky washes toward, in display-space sRGB — this pass
-     * runs after OutputPass, on tonemapped pixels. */
-    uRainColor: { value: new THREE.Vector3(0.42, 0.47, 0.52) },
+    /**
+     * What a rained-out sky washes toward, in display-space sRGB — this pass
+     * runs after OutputPass, on tonemapped pixels.
+     *
+     * Was (0.42, 0.47, 0.52): lead grey, and wrong. Measured across a rain-sky
+     * reference (Screenshot_20260813-053823.png, scripts/duskref.js) the sky
+     * runs #11315b at the top through #2c6e89 in the middle to #233a62 low
+     * down — luminance 45-98 and **saturation 0.64-0.86**. A rained-out sky is
+     * not desaturated, it is dark and deeply blue. Grey is what you get by
+     * assuming "no sun" means "no colour", and it is the difference between
+     * weather and a dead monitor.
+     *
+     * This is the middle band, which is where most of the frame's sky sits.
+     */
+    uRainColor: { value: new THREE.Vector3(0.173, 0.431, 0.537) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -137,8 +149,15 @@ export const RainShader = {
       float r1 = fract(id * 17.0);
       float r2 = fract(id * 91.7);
       float r3 = fract(id * 233.1);
-      float w = width * (0.55 + r2 * 1.1);
-      float len = 0.35 + r3 * 0.45; // fraction of the cell this drop occupies
+      // Width varies *downward only*: the widths were already at the top of
+      // what reads as rain rather than as a smear, so the range runs from
+      // four tenths of the sheet's width up to exactly it, never past.
+      float w = width * (0.4 + r2 * 0.6);
+      // Length varies far more than it did (was 0.35-0.80 of a cell). Drops
+      // are at every distance and falling at every angle to the view, so their
+      // streaks are at every length; a narrow range of lengths is one of the
+      // things that made the first version read as ruled hatching.
+      float len = 0.22 + r3 * 0.63;
 
       vec2 f = fract(grid);
       float x = abs(f.x - (0.2 + 0.6 * r1));
@@ -147,16 +166,20 @@ export const RainShader = {
       // Along it: brightest at the head, fading out along the tail.
       float along = smoothstep(0.0, len * 0.35, f.y) * smoothstep(len, len * 0.4, f.y);
       // And drops are not all equally visible: some catch the light, most
-      // barely register.
-      return across * along * (0.35 + r2 * r2 * 1.3);
+      // barely register. Squared, so the bright ones are the rare ones.
+      return across * along * (0.22 + r1 * r1 * 1.5);
     }
 
     // What the rain does to any colour in the scene: pulls it toward a flat
     // rain-grey and takes some of its contrast out with it.
     vec3 weather(vec3 c, float wash, float heavy) {
-      vec3 washed = mix(c, uRainColor * mix(1.0, 0.72, heavy), wash);
+      vec3 washed = mix(c, uRainColor * mix(1.0, 0.82, heavy), wash);
+      // Only a little contrast comes out with the light. This used to pull 40%
+      // of the way to grey, which undid most of the colour the wash had just
+      // put in — the reference sky holds saturation 0.64-0.86 through the
+      // heaviest part of the storm.
       float grey = dot(washed, vec3(0.299, 0.587, 0.114));
-      return mix(washed, vec3(grey), wash * 0.4);
+      return mix(washed, vec3(grey), wash * 0.12);
     }
 
     void main() {
@@ -223,8 +246,27 @@ export const RainShader = {
       // shards. A drop can only gather the light that is actually there.
       vec3 gathered = weather(
         texture2D(tDiffuse, vec2(vUv.x, min(vUv.y + 0.05, 1.0))).rgb, wash, heavy);
-      vec3 streakColor = gathered * 1.18 + 0.02;
-      color = mix(color, streakColor, clamp(streaks * mix(0.55, 1.0, heavy), 0.0, 1.0));
+
+      // Grey through white, by depth rather than at random.
+      //
+      // A distant drop is seen through kilometres of the same rain that is
+      // dimming everything else, so it arrives grey; a near one has almost
+      // nothing in front of it and shows the sky's own brightness. Tying the
+      // spread to the three sheets rather than rolling it per drop therefore
+      // gets it for free *and* gets it right — the pale streaks sit behind the
+      // bright ones, which is the depth cue, instead of being scattered
+      // through each other.
+      float grey = dot(gathered, vec3(0.299, 0.587, 0.114));
+      vec3 farColor = mix(vec3(grey), gathered, 0.35) * 0.92;
+      vec3 midColor = mix(vec3(grey), gathered, 0.7) * 1.08;
+      // The near drops are the pale ones in the reference — near white against
+      // the blue — so they get a push toward white on top of the gather.
+      vec3 nearColor = mix(gathered * 1.30, vec3(1.0), 0.25) + 0.04;
+
+      float strength = mix(0.55, 1.0, heavy) * visible;
+      color = mix(color, farColor, clamp(mist * 0.30 * strength, 0.0, 1.0));
+      color = mix(color, midColor, clamp(mid * mix(0.45, 0.78, heavy) * strength, 0.0, 1.0));
+      color = mix(color, nearColor, clamp(near * heavy * strength, 0.0, 1.0));
 
       gl_FragColor = vec4(color, src.a);
     }

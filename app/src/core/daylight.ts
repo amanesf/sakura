@@ -102,22 +102,17 @@ export function sunDirectionAtElevation(elevationDeg: number, azimuthDeg = SUN_A
   ).normalize();
 }
 
-/**
- * Rayleigh optical depth of the whole atmosphere at the zenith, per RGB — the
- * standard sea-level values (β ≈ 5.8/13.5/33.1 ×10⁻⁶ per metre over an 8km
- * scale height). Blue is scattered out of the direct beam nearly six times as
- * hard as red, which is the entire reason a low sun is orange.
+/*
+ * The Rayleigh-extinction derivation that used to live here is gone.
+ *
+ * It computed the direct beam's colour from Kasten-Young air mass and the
+ * standard zenith optical depths, which is correct physics and was still the
+ * wrong tool: it describes the light arriving at a cloud, not the colour a
+ * painted evening cloud is, and every attempt to use it needed a desaturation
+ * factor tuned by eye on top — at which point the physics was decoration on a
+ * guess. The dusk colours are measured off a reference now (see
+ * daylightAtHour), which is what the rest of this project does.
  */
-const ZENITH_TAU = new THREE.Vector3(0.0464, 0.108, 0.2648);
-
-/** Kasten-Young air mass: how many zenith atmospheres the direct beam crosses
- * at a given elevation. 1.22 at the fitted midday sun, 26 at the horizon. */
-function airMass(elevationDeg: number): number {
-  const h = Math.max(elevationDeg, -1.5);
-  return 1 / (Math.sin(THREE.MathUtils.degToRad(h)) + 0.50572 * Math.pow(h + 6.07995, -1.6364));
-}
-
-const NOON_AIR_MASS = airMass(sunElevationAtHour(CLOCK_START_HOUR));
 
 export interface Daylight {
   elevationDeg: number;
@@ -154,62 +149,63 @@ function normaliseLuminance(c: THREE.Color): void {
   c.multiplyScalar(1 / Math.max(luminance(c), 1e-6));
 }
 
-/** Move a colour toward its own grey. */
-function desaturate(c: THREE.Color, keep: number): void {
-  const g = luminance(c);
-  c.setRGB(
-    THREE.MathUtils.lerp(g, c.r, keep),
-    THREE.MathUtils.lerp(g, c.g, keep),
-    THREE.MathUtils.lerp(g, c.b, keep),
-  );
-}
-
 export function daylightAtHour(hour: number): Daylight {
   const elevationDeg = sunElevationAtHour(hour);
   const sunDir = sunDirectionAtElevation(elevationDeg, sunAzimuthAtHour(hour));
 
-  // Hue of the direct beam: extra Rayleigh extinction relative to noon. Divided
-  // through by its own brightest channel so this carries *colour only* — the
-  // raw transmittance at the horizon is about 0.001 in blue and would render
-  // the clouds black. How dark it gets is a separate decision below, because
-  // the eye (and this renderer's fixed exposure) adapts and a real sunset cloud
-  // is bright orange, not nearly black.
-  const extraMass = Math.max(airMass(elevationDeg) - NOON_AIR_MASS, 0);
-  const beam = new THREE.Color(
-    Math.exp(-ZENITH_TAU.x * extraMass),
-    Math.exp(-ZENITH_TAU.y * extraMass),
-    Math.exp(-ZENITH_TAU.z * extraMass),
-  );
-  // Pulled back off the pure physical result. At 2 degrees of elevation the
-  // beam's blue channel is genuinely down at 2% of its red, and a light that
-  // saturated turns cloud crowns into flat yellow: the direct beam is not the
-  // only thing lighting them, and multiple scattering inside a cloud fills the
-  // short end back in. 0.7 keeps the hue firmly orange with the blue channel
-  // still alive.
-  desaturate(beam, 0.7);
-  normaliseLuminance(beam);
+  // The colours of dusk, measured rather than derived.
+  //
+  // They used to come out of Rayleigh extinction along the beam's air mass,
+  // which is the right physics and the wrong answer: it describes the light
+  // arriving at a cloud, not the colour a painted evening cloud actually is,
+  // and the version tuned by eye on top of it came out a pale rose.
+  //
+  // These are sampled from the evening reference the user supplied
+  // (Screenshot_20260813-045658.png) with scripts/duskref.js, which ranks its
+  // cloud pixels by luminance the same way scene/cloudRamp.ts ranks the midday
+  // reference's. Converted to linear HDR (scripts/hdr.js) and normalised to
+  // luminance 1, so each carries hue alone and how bright it gets stays a
+  // separate decision:
+  //
+  //   percentile   measured sRGB    R/B    linear chroma
+  //    10%        117, 84,115      1.02    1.43, 0.83, 1.39   violet
+  //    75%        254,133,112      2.27    3.40, 0.36, 0.30   orange
+  //    98%        253,245,124      2.04    1.57, 0.93, 0.00   yellow-white
+  //
+  // The shadow end is taken straight from the 10%. The lit end is pulled back
+  // from the raw 3.40, 0.36, 0.30 — that is what the inverse tonemap demands to
+  // *land* on that orange, and used as an illuminant it drives the whole cloud
+  // to a single near-monochrome red. The reference's cloud is not one colour:
+  // it bows from violet through orange to yellow-white, and a bow is not
+  // something two endpoints can interpolate. Reproducing it properly needs a
+  // second measured ramp for the evening, the way cloudRamp.ts is one for
+  // midday. **That is the next step here, and these two values are the
+  // stand-in until it exists.**
+  const DUSK_LIT = new THREE.Color(2.10, 0.72, 0.35);
+  const DUSK_SHADOW = new THREE.Color(1.43, 0.83, 1.39);
+
+  const dusk = 1 - THREE.MathUtils.smoothstep(elevationDeg, 2, 30);
 
   // How much light is left. Held flat through the afternoon and dropped over
   // the last few degrees, which is where the change actually happens.
   const sunUp = THREE.MathUtils.smoothstep(elevationDeg, -2.5, 9);
-  const lit = THREE.MathUtils.lerp(0.2, 1, sunUp);
+  const lit = THREE.MathUtils.lerp(0.24, 1, sunUp);
 
-  const sunTint = beam.multiplyScalar(lit);
+  const sunTint = white().lerp(DUSK_LIT, dusk);
+  normaliseLuminance(sunTint);
+  sunTint.multiplyScalar(lit);
 
-  const dusk = 1 - THREE.MathUtils.smoothstep(elevationDeg, 2, 30);
-
-  // The shadow side is lit by the sky dome, so it cools as the dome loses its
-  // warm end — and it darkens further than the lit side does. A *grey*-violet,
-  // not a saturated blue: the cloud ramp's own shadow end is already a strong
-  // cerulean, and a vivid blue illuminant on top of it produced clouds the
-  // colour of ink.
-  const skyTint = white().lerp(new THREE.Color(0.62, 0.66, 0.82), dusk);
+  // The shading side is lit by the sky dome, not the sun, and it darkens
+  // further than the lit side does — but it stays luminous. In the reference
+  // those faces sit at luminance 93-129 against a lit 157-238, which is a
+  // ratio, not a collapse.
+  const skyTint = white().lerp(DUSK_SHADOW, dusk);
   normaliseLuminance(skyTint);
-  skyTint.multiplyScalar(THREE.MathUtils.lerp(1, 0.34, dusk));
+  skyTint.multiplyScalar(THREE.MathUtils.lerp(1, 0.5, dusk));
 
   // Nothing happens at all until the sun is low enough for it to. Above 30
   // degrees the measured midday ramp is simply correct.
-  const blend = 0.88 * dusk;
+  const blend = 0.94 * dusk;
 
   // The illustration is one painting made at midday, so it cannot relight
   // itself. Tinting it is the only way the room can belong to the same evening
