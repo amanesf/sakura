@@ -1,8 +1,8 @@
 import './style.css';
 import * as THREE from 'three';
 import { createRenderer, watchResize } from './core/renderer';
-import { createCamera } from './core/camera';
-import { visibleRect, applyToCamera } from './core/frame';
+import { createCamera, setCameraHorizon } from './core/camera';
+import { visibleRect, applyToCamera, FRAME_WIDTH, FRAME_HEIGHT } from './core/frame';
 import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials } from './scene/clouds';
 import { createCloudField, NO_SHADOW_CAST_LAYER } from './scene/cloudField';
@@ -17,6 +17,7 @@ import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
 import { createCloudLayer } from './scene/cloudLayer';
 import { createCompose } from './core/compose';
+import { SCENES } from './scene/scenes';
 
 // `?fit=frame` gives the whole viewport to the picture and hides the title and
 // console — the shape scripts/capture.js measures in (style.css). Applied
@@ -64,6 +65,10 @@ postFx.setRenderToScreen(fitFrame);
 // so the downscale costs nothing visible.
 const stageEl = document.querySelector<HTMLElement>('.stage');
 
+// The last frame rect, so a scene change can re-aim the camera through it
+// without waiting for a resize.
+let currentRect = visibleRect(FRAME_WIDTH / FRAME_HEIGHT);
+
 watchResize(renderer, (cssWidth, cssHeight) => {
   // Two resolutions now, and keeping them apart is the point.
   //
@@ -87,6 +92,7 @@ watchResize(renderer, (cssWidth, cssHeight) => {
   // 1408x768 frame, so the painted window frames stay registered to the sky
   // whatever shape the band is (core/frame.ts).
   const rect = visibleRect(Math.max(band.width, 1) / Math.max(band.height, 1));
+  currentRect = rect;
   const bufferWidth = Math.max(Math.round(rect.width), 1);
   const bufferHeight = Math.max(Math.round(rect.height), 1);
   postFx.setSize(bufferWidth, bufferHeight);
@@ -206,7 +212,23 @@ const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
 const cloudLayer = fitFrame ? null : createCloudLayer(512, 280);
 if (cloudLayer) compose.setClouds(cloudLayer.texture);
 
-const controls = createControls(initial);
+// Which illustration is in front of the sky. Scene 1 is the default and is the
+// frame every statistic in this project was measured against, so adding a
+// second one changes no measurement (scene/scenes.ts).
+//
+// The console owns the current value; this is called once during
+// createControls with whatever `?scene=` or the remembered choice resolved to,
+// and again on every press.
+function applyScene(index: number): void {
+  const scene = SCENES[index];
+  postFx.setScene(scene);
+  // The rendered horizon has to agree with the painted one, so the camera is
+  // re-aimed and the frame rect re-applied through it.
+  setCameraHorizon(camera, scene.cameraHorizonFraction);
+  applyToCamera(camera, currentRect);
+}
+
+const controls = createControls(initial, query.get('scene'), applyScene);
 
 // Everything the console drives, applied once per frame rather than on change
 // events: three of the four sliders feed values that also have to be re-derived

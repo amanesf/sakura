@@ -1,4 +1,5 @@
 import { CLOCK_END_HOUR, CLOCK_START_HOUR, formatClock } from '../core/daylight';
+import { DEFAULT_SCENE, SCENES, sceneIndexFor } from '../scene/scenes';
 
 /**
  * The console: four sliders in the order the sky is built up, then the frame
@@ -25,6 +26,8 @@ export interface Controls {
   hour: () => number;
   /** Frames per second the render loop is allowed to draw at, 30 or 60. */
   frameRate: () => number;
+  /** Index into scene/scenes.ts's SCENES. */
+  sceneIndex: () => number;
   /** Move a slider from code, as if the user had. Used by the capture harness
    * (scripts/shoot.js) to retarget the scene without reloading the page. */
   setValue: (key: string, value: number) => void;
@@ -126,28 +129,64 @@ const SLIDERS: SliderSpec[] = [
  * Not a quality setting: both give exactly the same picture, so a capture is
  * unaffected either way and the measure loop does not care which is selected.
  *
- * A discrete choice with two values wants two buttons. Putting it on a slider
- * would have implied the values between them mean something, and 43fps does
- * not.
+ * See addSegment in createControls for the shape it is drawn in.
  */
 const FRAME_RATES = [30, 60] as const;
 const DEFAULT_FRAME_RATE = 60;
-/** Where the choice is remembered. A preference someone sets because their
- * phone struggles is not one they should have to set again every visit. */
+/** Where the choices are remembered. A preference someone sets because their
+ * phone struggles — or because they prefer the other picture — is not one they
+ * should have to set again every visit. */
 const FRAME_RATE_KEY = 'sakura.fps';
+const SCENE_KEY = 'sakura.scene';
 
-function storedFrameRate(): number | undefined {
+/** localStorage, with the failure mode that matters: private mode throws, and
+ * the app has no business refusing to start over a remembered preference. */
+function stored(key: string): string | null {
   try {
-    const raw = Number(localStorage.getItem(FRAME_RATE_KEY));
-    return (FRAME_RATES as readonly number[]).includes(raw) ? raw : undefined;
+    return localStorage.getItem(key);
   } catch {
-    // Private mode, or storage disabled. The app has no business failing to
-    // start over a remembered preference.
-    return undefined;
+    return null;
   }
 }
 
-export function createControls(initial: Partial<Record<string, number>> = {}): Controls {
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // See stored(). Not being able to remember a choice is not a reason to
+    // refuse to apply it.
+  }
+}
+
+/**
+ * The first candidate that names one of `values`, in precedence order.
+ *
+ * Used for both segments, and the order is the point: the URL wins over what
+ * was remembered, which wins over the default. That is the same precedence the
+ * sliders give `?cloud=` and friends, so a shared link always shows what its
+ * author saw rather than what the recipient last looked at.
+ */
+function pick<T extends string | number>(
+  values: readonly T[],
+  ...candidates: (T | string | number | null | undefined)[]
+): T {
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const match = values.find((v) => String(v) === String(candidate));
+    if (match !== undefined) return match;
+  }
+  return values[0];
+}
+
+export function createControls(
+  initial: Partial<Record<string, number>> = {},
+  /** `?scene=`, which is a key rather than a number so it stays readable. */
+  initialScene?: string | null,
+  /** Called when the scene buttons are pressed. The scene is not a value the
+   * render loop can simply read every frame like the sliders are — swapping it
+   * re-aims the camera and reloads a plate — so it is delivered as an event. */
+  onSceneChange?: (index: number) => void,
+): Controls {
   const host = document.querySelector('.console') ?? document.body;
   const values = new Map<string, number>();
   const setters = new Map<string, (value: number) => void>();
@@ -196,53 +235,87 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
     sync();
   }
 
-  // The frame rate row. Same three-column shape as a slider so the console
-  // still reads as one instrument: label, then the buttons sitting where the
-  // sliders' readouts sit.
-  const fpsRow = document.createElement('div');
-  fpsRow.className = 'slider';
+  /**
+   * A row of mutually exclusive buttons, in the same three-column shape as a
+   * slider so the console still reads as one instrument: label on the left, the
+   * buttons sitting where the sliders' readouts sit.
+   *
+   * Two of these now (frame rate, scene). A discrete choice with a handful of
+   * values wants buttons — putting either on a slider would imply the values
+   * between them mean something, and 43fps does not, nor does half a scene.
+   */
+  function addSegment<T extends string | number>(options: {
+    label: string;
+    ariaLabel: string;
+    values: readonly T[];
+    text: (value: T) => string;
+    initial: T;
+    /** localStorage key, when the choice should outlive the visit. */
+    storeAs?: string;
+    onChange?: (value: T) => void;
+  }): { get: () => T; set: (value: T) => void } {
+    const row = document.createElement('div');
+    row.className = 'slider';
 
-  const fpsLabel = document.createElement('span');
-  fpsLabel.className = 'slider__label';
-  fpsLabel.textContent = 'FPS';
+    const label = document.createElement('span');
+    label.className = 'slider__label';
+    label.textContent = options.label;
 
-  const group = document.createElement('div');
-  group.className = 'segment';
-  group.setAttribute('role', 'group');
-  group.setAttribute('aria-label', 'フレームレート上限');
+    const group = document.createElement('div');
+    group.className = 'segment';
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', options.ariaLabel);
+
+    let current = options.initial;
+
+    const buttons = options.values.map((value) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'segment__button';
+      button.textContent = options.text(value);
+      button.addEventListener('click', () => set(value));
+      group.appendChild(button);
+      return { value, button };
+    });
+
+    function set(value: T): void {
+      current = value;
+      for (const entry of buttons) {
+        entry.button.setAttribute('aria-pressed', String(entry.value === value));
+      }
+      if (options.storeAs) remember(options.storeAs, String(value));
+      options.onChange?.(value);
+    }
+
+    set(current);
+    row.append(label, group);
+    host.appendChild(row);
+    return { get: () => current, set };
+  }
 
   // The URL wins over what was remembered, which wins over the default — the
-  // same precedence the sliders give `?cloud=` and friends, so `?fps=30` names
-  // a frame rate the way `?rain=1` names a downpour.
-  const wanted = initial.fps ?? storedFrameRate() ?? DEFAULT_FRAME_RATE;
-  values.set('fps', (FRAME_RATES as readonly number[]).includes(wanted) ? wanted : DEFAULT_FRAME_RATE);
-
-  const buttons = FRAME_RATES.map((rate) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'segment__button';
-    button.textContent = String(rate);
-    button.addEventListener('click', () => select(rate));
-    group.appendChild(button);
-    return { rate, button };
+  // same precedence the sliders give `?cloud=` and friends, so `?fps=30` names a
+  // frame rate the way `?rain=1` names a downpour.
+  const storedFps = Number(stored(FRAME_RATE_KEY));
+  const fps = addSegment({
+    label: 'FPS',
+    ariaLabel: 'フレームレート上限',
+    values: FRAME_RATES,
+    text: String,
+    initial: pick(FRAME_RATES, initial.fps, storedFps, DEFAULT_FRAME_RATE),
+    storeAs: FRAME_RATE_KEY,
   });
 
-  function select(rate: number): void {
-    values.set('fps', rate);
-    for (const entry of buttons) {
-      entry.button.setAttribute('aria-pressed', String(entry.rate === rate));
-    }
-    try {
-      localStorage.setItem(FRAME_RATE_KEY, String(rate));
-    } catch {
-      // See storedFrameRate: not being able to remember it is not a reason to
-      // refuse to apply it.
-    }
-  }
-  select(values.get('fps') ?? DEFAULT_FRAME_RATE);
-
-  fpsRow.append(fpsLabel, group);
-  host.appendChild(fpsRow);
+  const sceneKeys = SCENES.map((s) => s.key);
+  const scene = addSegment({
+    label: 'SCENE',
+    ariaLabel: '場面',
+    values: sceneKeys,
+    text: (key) => SCENES[sceneIndexFor(key)].label,
+    initial: pick(sceneKeys, initialScene, stored(SCENE_KEY), SCENES[DEFAULT_SCENE].key),
+    storeAs: SCENE_KEY,
+    onChange: (key) => onSceneChange?.(sceneIndexFor(key)),
+  });
 
   const read = (key: string) => values.get(key) ?? 0;
   return {
@@ -251,6 +324,7 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
     cloudAmount: () => read('cloud'),
     rainAmount: () => read('rain'),
     hour: () => read('hour'),
-    frameRate: () => values.get('fps') ?? DEFAULT_FRAME_RATE,
+    frameRate: () => fps.get(),
+    sceneIndex: () => sceneIndexFor(scene.get()),
   };
 }

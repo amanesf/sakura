@@ -12,6 +12,7 @@ import { RainShader } from '../effects/rainShader';
 import { relightForDay, type Daylight } from './daylight';
 import { HorizonHazeShader } from '../effects/horizonHaze';
 import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
+import { SCENES, type SceneDef } from '../scene/scenes';
 
 export interface PostFx {
   /** The finished picture. Nothing draws to the canvas any more — this goes to
@@ -44,6 +45,8 @@ export interface PostFx {
   /** The visible sub-rect of the reference's frame — drives both the plate's UVs
    * and where the horizon haze band sits (core/frame.ts). */
   setFrameRect: (rect: FrameRect) => void;
+  /** Which illustration is in front of the sky (scene/scenes.ts). */
+  setScene: (scene: SceneDef) => void;
   render: () => void;
 }
 
@@ -119,17 +122,28 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
 
   // The foreground plate goes on last — see effects/plateShader.ts for why
   // nothing may run after it.
-  const plateTexture = new THREE.TextureLoader().load('plate.webp');
-  // The buffer at this point is already display-space sRGB (OutputPass ran
-  // several passes ago), so the plate must be sampled raw. Tagging it
-  // SRGBColorSpace would have the sampler linearise it into a buffer that is
-  // not linear, washing the illustration out.
-  plateTexture.colorSpace = THREE.NoColorSpace;
-  plateTexture.minFilter = THREE.LinearFilter;
-  plateTexture.magFilter = THREE.LinearFilter;
-  plateTexture.generateMipmaps = false;
+  //
+  // One texture per scene, loaded on first use and kept: switching scenes is a
+  // button press and should not show a frame of missing illustration, and there
+  // are two of these at about 100 KB each.
+  const loader = new THREE.TextureLoader();
+  const plateTextures = new Map<string, THREE.Texture>();
+  const plateFor = (scene: SceneDef): THREE.Texture => {
+    const cached = plateTextures.get(scene.plate);
+    if (cached) return cached;
+    const texture = loader.load(scene.plate);
+    // The buffer at this point is already display-space sRGB (OutputPass ran
+    // several passes ago), so the plate must be sampled raw. Tagging it
+    // SRGBColorSpace would have the sampler linearise it into a buffer that is
+    // not linear, washing the illustration out.
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    plateTextures.set(scene.plate, texture);
+    return texture;
+  };
   const platePass = new ShaderPass(PlateShader);
-  platePass.uniforms.tPlate.value = plateTexture;
   composer.addPass(platePass);
 
   const setSize = (width: number, height: number) => {
@@ -177,30 +191,46 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     platePass.uniforms.uRainExposure.value = 1 + (skyExposure - 1) * Math.min(Math.max(amount, 0), 1);
   };
 
-  // The painted sea horizon sits at y=593 of the 1408x768 frame (measured), and
-  // the haze band reaches about 100px above it.
-  const HORIZON_ROW = 593;
-  const HAZE_TOP_ROW = 470;
+  // Where the painted horizon is, per scene (scene/scenes.ts). Both of these
+  // were constants when there was one illustration.
+  let plateScene = SCENES[0];
+  // The last rect, so a scene change can re-derive the haze band from it
+  // without waiting for a resize.
+  let frameRect: FrameRect = { x: 0, y: 0, width: FRAME_WIDTH, height: FRAME_HEIGHT };
 
-  const setFrameRect = (rect: FrameRect) => {
+  const applyFrame = () => {
+    platePass.uniforms.tPlate.value = plateFor(plateScene);
     platePass.uniforms.uPlateRect.value.set(
-      rect.x / 1408,
-      1 - (rect.y + rect.height) / FRAME_HEIGHT,
-      rect.width / 1408,
-      rect.height / FRAME_HEIGHT,
+      frameRect.x / FRAME_WIDTH,
+      1 - (frameRect.y + frameRect.height) / FRAME_HEIGHT,
+      frameRect.width / FRAME_WIDTH,
+      frameRect.height / FRAME_HEIGHT,
     );
     // Frame rows -> screen v, remembering v runs bottom-up.
     horizonPass.uniforms.uHazeV.value.set(
-      1 - (HORIZON_ROW - rect.y) / rect.height,
-      1 - (HAZE_TOP_ROW - rect.y) / rect.height,
+      1 - (plateScene.horizonRow - frameRect.y) / frameRect.height,
+      1 - (plateScene.hazeTopRow - frameRect.y) / frameRect.height,
     );
   };
+
+  const setFrameRect = (rect: FrameRect) => {
+    frameRect = rect;
+    applyFrame();
+  };
+
+  const setScene = (next: SceneDef) => {
+    plateScene = next;
+    applyFrame();
+  };
+
+  applyFrame();
 
   return {
     outputTexture: () => composer.readBuffer.texture,
     setRenderToScreen: (enabled: boolean) => { composer.renderToScreen = enabled; },
     setSize,
     setFrameRect,
+    setScene,
     setDaylight,
     setRain,
     render: () => composer.render(),

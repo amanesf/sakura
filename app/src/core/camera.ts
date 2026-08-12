@@ -25,6 +25,25 @@ function solveHorizonPitchDeg(horizonFraction: number, verticalFovDeg: number): 
 
 export const CAMERA_PITCH_DEG = solveHorizonPitchDeg(HORIZON_SCREEN_FRACTION, CAMERA_VERTICAL_FOV_DEG);
 
+/**
+ * Re-aim the camera so the horizon lands at `fraction` of the frame height.
+ *
+ * The same solve as above, applied after construction. A second illustration
+ * (scene/scenes.ts) paints its horizon in a different place, and the rendered
+ * sky has to agree with the painting it is seen through — a camera left at
+ * scene 1's pitch puts its horizon 128px above scene 2's painted sea, which
+ * shows as a band of below-horizon sky standing above the water.
+ *
+ * Only the pitch moves. The field of view is untouched, so the clouds keep the
+ * angular size every constant in this project was fitted to.
+ */
+export function setCameraHorizon(camera: THREE.PerspectiveCamera, fraction: number): void {
+  camera.rotation.x = THREE.MathUtils.degToRad(
+    solveHorizonPitchDeg(fraction, CAMERA_VERTICAL_FOV_DEG),
+  );
+  camera.updateMatrixWorld(true);
+}
+
 /** Eye-level height in kilometers (the sky/cloud shader's world unit — see skyClouds.ts). */
 export const CAMERA_ALTITUDE_KM = 0.0017;
 
