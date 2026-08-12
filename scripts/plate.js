@@ -22,21 +22,52 @@
  * are islands surrounded by key, so absorbing them costs one flood fill.
  *
  * Usage:
- *   node scripts/plate.js --preview   # matte over a flat colour, to eyeball
- *   node scripts/plate.js             # writes app/public/plate.webp
+ *   node scripts/plate.js --preview             # matte over a flat colour, to eyeball
+ *   node scripts/plate.js                       # writes app/public/plate.webp
+ *   node scripts/plate.js --scene 2 [--preview] # the second scene
  */
 const sharp = require('sharp');
 const path = require('path');
 
-const REF = path.join(__dirname, '..', '1786443741198.png');
-const KEYED = path.join(__dirname, '..', '1786511966180.png');
-// WebP, not PNG: 127 KB against 2.29 MB for the same 1408x768 RGBA, and this
-// has to load before the first frame can be composited.
-const OUT = path.join(__dirname, '..', 'app', 'public', 'plate.webp');
+const repo = (...p) => path.join(__dirname, '..', ...p);
 
-/** The flooded colour, taken as the modal pixel of the keyed image (7.2% of the
- * frame on its own; the next five modes are the same colour ±2 from PNG
- * re-encoding, together another 16%). */
+/**
+ * The scenes, and what each one was given to build a plate from.
+ *
+ * Scene 1 arrived as a pair — the artwork, and a copy with the sky flooded by
+ * hand — which is the ideal input: the matte comes from the keyed copy and every
+ * output pixel comes from the untouched artwork, so no magenta can reach the
+ * result even where bilinear filtering samples across the matte's edge.
+ *
+ * Scene 2 arrived already keyed, with no un-keyed original. That is workable —
+ * the flood only replaced sky, so every pixel the plate keeps is still the
+ * artwork — but it removes the guarantee above, and `bleed` below is what pays
+ * for it. Worth knowing when the next scene is prepared: **two files are better
+ * than one**, and the second one costs nothing but a flood fill.
+ */
+const SCENES = {
+  1: {
+    art: repo('1786443741198.png'),
+    keyed: repo('1786511966180.png'),
+    // WebP, not PNG: 127 KB against 2.29 MB for the same 1408x768 RGBA, and
+    // this has to load before the first frame can be composited.
+    out: repo('app', 'public', 'plate.webp'),
+  },
+  2: {
+    art: null, // keyed only — see bleed()
+    keyed: repo('1786575481846.png'),
+    out: repo('app', 'public', 'plate2.webp'),
+  },
+};
+
+/** The flooded colour, taken as the modal pixel of scene 1's keyed image (7.2%
+ * of the frame on its own; the next five modes are the same colour ±2 from PNG
+ * re-encoding, together another 16%).
+ *
+ * Scene 2's flood is a slightly different magenta — its mode is (181, 2, 254),
+ * 27 away — which the tolerance below swallows without needing a second
+ * constant. Anything much further off would deserve its own entry rather than a
+ * widened tolerance: the tolerance's job is antialiased edges, not a new key. */
 const KEY = [207.5, 4, 248];
 
 /** Everything within this distance of the key is sky. It is deliberately huge —
@@ -80,9 +111,180 @@ function fillEnclosed(mask, W, H) {
   return filled;
 }
 
+/**
+ * Repair every pixel the flood contaminated, in place.
+ *
+ * Only needed when the artwork *is* the keyed file (scene 2). Scene 1 is handed
+ * a separate un-keyed original and takes all of its RGB from that, which makes
+ * the whole problem below impossible; this earns the same property the hard way.
+ *
+ * There are two contaminated populations and the first attempt only fixed one
+ * of them, which is worth recording because the preview looked wrong in exactly
+ * the way that identifies it — a violet thread along every roof edge, pillar and
+ * strand of hair:
+ *
+ *  - **Under the matte.** Flood magenta, alpha 0. Never drawn on its own, but
+ *    the plate is a WebP scaled to the band and filtered bilinearly, so a sample
+ *    landing near the edge mixes it into a visible pixel.
+ *  - **The antialiased rim, just outside the matte.** In the artwork these
+ *    pixels are already part paint and part sky, and in the keyed file the sky
+ *    they are part of *is the flood* — so they are genuinely violet, they carry
+ *    full or near-full alpha, and they are drawn as-is. This is the population
+ *    that showed. `KEY_TOLERANCE` cannot take them: widening it far enough to
+ *    swallow them eats real paint, which is why the matte and this repair are
+ *    two separate decisions rather than one threshold.
+ *
+ * So the repair region is the matte *plus* the pixels within REPAIR_REACH of it
+ * that are still close enough to the key to be contaminated — a colour test, not
+ * just a geometric one, so that a genuinely violet piece of artwork away from
+ * the edge is left alone. Their colour is then dilated in from clean neighbours.
+ * The matte itself is not touched: alpha still comes from `isKey` alone, so the
+ * silhouette is exactly what was keyed.
+ */
+/**
+ * How far from the matte a mildly-cast pixel is still assumed to be flood.
+ *
+ * 10, which sounds generous and is not: it is anchored to the matte, and the
+ * only thing it can reach that far in is the inside of the girl's ponytail,
+ * where the sky comes through in wedges several pixels deep. Nothing else in
+ * the frame is both within ten pixels of sky and cool enough to trip the cast
+ * test — the artwork's coolest colour, her navy collar, sits at about -20.
+ */
+const REPAIR_REACH = 10;
+/**
+ * How much magenta a pixel has to be carrying to count as contaminated.
+ *
+ * **Not** distance to the key colour, which was the first attempt and left
+ * visible violet behind. The flood is a bright magenta and the rim pixels are
+ * mixtures of it with whatever they border — and most of what they border here
+ * is a *dark* roof soffit, so a half-and-half mixture lands 150+ away from the
+ * key and a threshold on that distance either misses it or, raised far enough
+ * to catch it, starts eating paint. Distance to a single bright colour cannot
+ * separate "dark thing mixed with magenta" from "dark thing".
+ *
+ * The cast can. Magenta is the one hue with both ends of the spectrum up and
+ * the middle down, so `min(r, b) - g` is large for any mixture containing it and
+ * negative for essentially all of this artwork — grey concrete, green hills,
+ * blue sea, skin, brown leather, navy uniform. It also scales with the mixture
+ * rather than with the brightness, so one threshold covers the rim from 10%
+ * magenta upward whatever it is mixed into.
+ *
+ * 4, not 12. A cast of 8 over dark concrete is invisible in a histogram and
+ * perfectly visible as a violet thread on a soffit, which is precisely where
+ * this artwork puts its longest matte edges.
+ */
+const MAGENTA_CAST = 4;
+/**
+ * A cast this strong is the flood wherever it is, so it is repaired without the
+ * distance test. It catches what leaked *through* the girl's ponytail: gaps
+ * between hair strands are open to the sky but too narrow and too blended with
+ * dark hair for either KEY_TOLERANCE or fillEnclosed to claim them, and they
+ * came out as bright magenta wedges in her hair.
+ *
+ * 20, not 40. Blended into dark hair the wedges only reach a cast in the
+ * twenties, and against a grey soffit that is still plainly purple. Nothing in
+ * this artwork carries a cast that strong for a legitimate reason — the coolest
+ * thing in it is a navy collar, which sits at about -20.
+ */
+const STRONG_CAST = 20;
+const cast = (r, g, b) => Math.min(r, b) - g;
+
+function repairFlood(data, isKey, W, H, C, passes = 4) {
+  // The rim: near the matte, and still carrying the flood's colour.
+  const damaged = new Uint8Array(isKey);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const p = y * W + x;
+      if (isKey[p]) continue;
+      const c = cast(data[p * C], data[p * C + 1], data[p * C + 2]);
+      if (c <= MAGENTA_CAST) continue;
+      if (c > STRONG_CAST) { damaged[p] = 1; continue; }
+      let near = false;
+      for (let dy = -REPAIR_REACH; dy <= REPAIR_REACH && !near; dy++) {
+        for (let dx = -REPAIR_REACH; dx <= REPAIR_REACH; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+          if (isKey[yy * W + xx]) { near = true; break; }
+        }
+      }
+      if (near) damaged[p] = 1;
+    }
+  }
+
+  let rim = 0;
+  for (let p = 0; p < W * H; p++) if (damaged[p] && !isKey[p]) rim++;
+
+  // Dilate clean colour inward, one ring per pass.
+  let frontier = damaged;
+  for (let pass = 0; pass < passes; pass++) {
+    const next = new Uint8Array(frontier);
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const p = y * W + x;
+        if (!frontier[p]) continue;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            const q = yy * W + xx;
+            if (frontier[q]) continue; // still contaminated, nothing to take
+            r += data[q * C]; g += data[q * C + 1]; b += data[q * C + 2]; n++;
+          }
+        }
+        if (!n) continue;
+        data[p * C] = Math.round(r / n);
+        data[p * C + 1] = Math.round(g / n);
+        data[p * C + 2] = Math.round(b / n);
+        next[p] = 0; // clean now, so the next pass can take from it
+      }
+    }
+    frontier = next;
+  }
+
+  // Whatever the dilation could not reach — the deep interior of the sky, which
+  // is most of this frame — is still pure flood, and that matters even though
+  // its alpha is 0. The plate ships as lossy WebP, which subsamples chroma to
+  // 2x2 blocks and codes them in 4x4 transforms, so a large saturated magenta
+  // field pushes colour back across the matte edge into pixels that *are*
+  // drawn: measured, the encode tripled the count of strongly-cast visible
+  // pixels (938 -> 3100) on a plate whose stored RGB was already repaired at
+  // the edge.
+  //
+  // Flooding the remainder with one neutral colour removes the source of it
+  // entirely, and costs nothing: nothing is drawn there, the dilated rings
+  // above are what any filtering actually reaches, and a flat field is cheaper
+  // to encode than a magenta one. The colour is the painted mean, so it also
+  // has no chroma to give away.
+  let r = 0, g = 0, b = 0, n = 0;
+  for (let p = 0; p < W * H; p++) {
+    if (isKey[p]) continue;
+    r += data[p * C]; g += data[p * C + 1]; b += data[p * C + 2]; n++;
+  }
+  const mean = n ? [Math.round(r / n), Math.round(g / n), Math.round(b / n)] : [128, 128, 128];
+  let flooded = 0;
+  for (let p = 0; p < W * H; p++) {
+    if (!frontier[p]) continue; // reached by the dilation, already paint
+    data[p * C] = mean[0]; data[p * C + 1] = mean[1]; data[p * C + 2] = mean[2];
+    flooded++;
+  }
+
+  return { rim, flooded, mean };
+}
+
 async function main() {
-  const ref = await raw(REF);
-  const keyed = await raw(KEYED);
+  const args = process.argv.slice(2);
+  const sceneArg = args.includes('--scene') ? args[args.indexOf('--scene') + 1] : '1';
+  const scene = SCENES[sceneArg];
+  if (!scene) {
+    console.error(`unknown scene "${sceneArg}" — known: ${Object.keys(SCENES).join(', ')}`);
+    process.exit(1);
+  }
+
+  const keyed = await raw(scene.keyed);
+  // With no separate artwork the keyed file is both, and bleed() below covers
+  // the difference.
+  const ref = scene.art ? await raw(scene.art) : keyed;
   const { W, H } = ref;
   if (keyed.W !== W || keyed.H !== H) throw new Error('the keyed image must match the reference frame');
 
@@ -99,13 +301,16 @@ async function main() {
   // enclosed by sky is sky.
   const filled = fillEnclosed(isKey, W, H);
 
+  // Scene 1 draws its RGB from the untouched artwork, so no magenta can reach
+  // the output however the texture is later filtered. Scene 2 has no such file
+  // and has to earn the same property.
+  const repair = scene.art ? null : repairFlood(ref.data, isKey, W, H, ref.C);
+
   const out = Buffer.alloc(W * H * 4);
   let sky = 0;
   for (let p = 0; p < W * H; p++) {
     const i = p * ref.C;
-    // RGB always comes from the original reference, never from the keyed file:
-    // it is the untouched artwork, and no magenta can leak in even where
-    // bilinear filtering samples across the matte edge.
+    // RGB always comes from the artwork, never from the flood.
     out[p * 4] = ref.data[i];
     out[p * 4 + 1] = ref.data[i + 1];
     out[p * 4 + 2] = ref.data[i + 2];
@@ -131,10 +336,13 @@ async function main() {
 
   console.log(
     `sky: ${sky} px (${(100 * sky / (W * H)).toFixed(1)}% of frame), ` +
-    `reflections/islands absorbed: ${filled} px`,
+    `reflections/islands absorbed: ${filled} px` +
+    (repair
+      ? `, rim repaired: ${repair.rim} px, interior flooded with rgb(${repair.mean}): ${repair.flooded} px`
+      : ''),
   );
 
-  if (process.argv[2] === '--preview') {
+  if (args.includes('--preview')) {
     // Composite over a flat mid-grey so the matte and the recovered reflections
     // can both be judged: purple fringing would mean the un-mix is wrong,
     // missing reflections would mean the feather is too wide.
@@ -143,16 +351,28 @@ async function main() {
       const a = out[p * 4 + 3] / 255;
       for (let c = 0; c < 3; c++) pv[p * 3 + c] = Math.round(out[p * 4 + c] * a + 90 * (1 - a));
     }
-    const dst = '/tmp/plate_preview.png';
+    const dst = `/tmp/plate_preview_${sceneArg}.png`;
     await sharp(pv, { raw: { width: W, height: H, channels: 3 } }).png().toFile(dst);
     console.log(dst);
+
+    // The stored RGB on its own, alpha ignored, lossless. The composite above
+    // answers "does the matte look right"; this answers "is the colour under
+    // and around the matte clean", which is a different question and the one
+    // that catches flood contamination — including the part of it that only
+    // becomes visible after the lossy WebP encode spreads chroma across 2x2
+    // blocks.
+    const rgb = Buffer.alloc(W * H * 3);
+    for (let p = 0; p < W * H; p++) for (let c = 0; c < 3; c++) rgb[p * 3 + c] = out[p * 4 + c];
+    const rgbDst = `/tmp/plate_rgb_${sceneArg}.png`;
+    await sharp(rgb, { raw: { width: W, height: H, channels: 3 } }).png().toFile(rgbDst);
+    console.log(rgbDst);
     return;
   }
 
   const info = await sharp(out, { raw: { width: W, height: H, channels: 4 } })
     .webp({ quality: 92, alphaQuality: 100 })
-    .toFile(OUT);
-  console.log(`${OUT} (${W}x${H}, ${(info.size / 1024).toFixed(0)} KB)`);
+    .toFile(scene.out);
+  console.log(`${scene.out} (${W}x${H}, ${(info.size / 1024).toFixed(0)} KB)`);
 }
 
 main().catch((e) => { console.error(e.message); process.exit(1); });
