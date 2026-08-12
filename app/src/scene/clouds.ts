@@ -37,6 +37,10 @@ interface Nodule {
 export interface CloudClusterHandle {
   group: THREE.Group;
   update: (elapsed: number, growth: number, windOffset: THREE.Vector2) => void;
+  /** Clusters are now built and thrown away as clouds blow through the scene
+   * (scene/cloudField.ts), so the per-cluster geometry clone has to be released
+   * — it holds its own instance attribute buffers on the GPU. */
+  dispose: () => void;
 }
 
 /**
@@ -362,5 +366,11 @@ export function createCloudCluster(
 
   update(0, 1, new THREE.Vector2(0, 0));
 
-  return { group, update };
+  function dispose(): void {
+    coreMesh.dispose();
+    coreGeom.dispose();
+    group.clear();
+  }
+
+  return { group, update, dispose };
 }
