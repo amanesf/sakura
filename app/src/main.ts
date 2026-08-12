@@ -93,7 +93,15 @@ const CLOUD_BASE_ALT = 1.4;
 // measured screen position).
 const TOWER_CENTER = new THREE.Vector2(5.5, -16.0);
 const TOWER_TOP_ALT = 10.8;
-const TOWER_RADIUS = 4.3;
+// Angular width, not a size in km, is what the reference constrains. Distance
+// is composition-anchored and the top elevation atan(10.8/16.92) = 32.6°
+// already matches the reference's crown at y≈77 (≈33°), so the radius is the
+// only free term. This is the radius at the tower's widest point (its
+// shoulder); towerRadiusProfile() below documents the per-band fit that puts
+// the reference's maximum at 10.5° of angular width, i.e.
+// 16.92·tan(10.5°/2) = 1.56km. The previous 4.3 was 28.6° across — nearly
+// three times too wide, which is what pushed cloud into the 17-33° bands.
+const TOWER_RADIUS = 1.58;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
   // An explicit three-part silhouette rather than a single symmetric bump.
@@ -102,9 +110,25 @@ function towerRadiusProfile(t: number): number {
   // 入道雲. A cumulonimbus is not symmetric about its waist: it flares
   // quickly off a fairly narrow base, holds a broad shoulder through most of
   // its body, then draws in toward a cauliflower crown.
-  const flare = THREE.MathUtils.smoothstep(t, 0.0, 0.24);
-  const crown = 1 - THREE.MathUtils.smoothstep(t, 0.52, 1.0) * 0.58;
-  return TOWER_RADIUS * (0.58 + 0.62 * flare) * crown;
+  // The shape is fitted to the reference band by band rather than shaped by
+  // eye. skyprofile.js's per-band cloud pixel count, divided by 40 rows and by
+  // 17.4 px/deg, gives the tower's angular width at each elevation; with the
+  // distance fixed at 16.92km that converts to a radius at a known altitude,
+  // i.e. to a point on this profile (t is normalised height between
+  // CLOUD_BASE_ALT and TOWER_TOP_ALT):
+  //   elev 22.8° → alt 7.11km → t=0.61 →  7.8° → r=1.16km
+  //   elev 25.5° → alt 8.07km → t=0.71 → 10.5° → r=1.56km
+  //   elev 28.1° → alt 9.03km → t=0.81 →  9.7° → r=1.44km
+  //   elev 30.6° → alt 10.0km → t=0.90 →  6.5° → r=0.96km
+  // So the reference's widest point is the *shoulder* at t≈0.73, and the
+  // trunk below it is narrower — the previous profile had it the other way
+  // round (widest at the base, tapering upward), which is why the render's
+  // widths ran 4.6°/6.1°/9.2°/12.5° over those same bands: an upside-down
+  // cone. Below t≈0.6 the reference tower is behind the mid-level deck, so
+  // that part is unconstrained by measurement and just carries the taper on.
+  const shoulder = 0.45 + 0.55 * THREE.MathUtils.smoothstep(t, 0.42, 0.75);
+  const crown = 1 - 0.62 * THREE.MathUtils.smoothstep(t, 0.73, 1.05);
+  return TOWER_RADIUS * shoulder * crown;
 }
 
 interface AnimatedCluster {
