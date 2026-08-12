@@ -8,11 +8,16 @@ import { GradeShader } from '../effects/gradeShader';
 import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
 import { PlateShader } from '../effects/plateShader';
+import { RainShader } from '../effects/rainShader';
 import { HorizonHazeShader } from '../effects/horizonHaze';
 import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
+  /** Illuminant for the painted plate — white at noon (core/daylight.ts). */
+  setDayTint: (tint: THREE.Color) => void;
+  /** Rain, 0-1, and the clock it falls on (simTime, so captures reproduce). */
+  setRain: (amount: number, simTime: number) => void;
   /** The visible sub-rect of the reference's frame — drives both the plate's UVs
    * and where the horizon haze band sits (core/frame.ts). */
   setFrameRect: (rect: FrameRect) => void;
@@ -78,6 +83,13 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const horizonPass = new ShaderPass(HorizonHazeShader);
   composer.addPass(horizonPass);
 
+  // Rain goes immediately before the plate, which is what confines it to the
+  // sky: the plate is composited over it, so the only pixels it survives on are
+  // the ones the illustration leaves transparent. See effects/rainShader.ts.
+  const rainPass = new ShaderPass(RainShader);
+  rainPass.enabled = false; // nothing to do while it is dry
+  composer.addPass(rainPass);
+
   // The foreground plate goes on last — see effects/plateShader.ts for why
   // nothing may run after it.
   const plateTexture = new THREE.TextureLoader().load('plate.webp');
@@ -100,6 +112,17 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     bloomPass.setSize(width, height);
     gradePass.uniforms.uAspect.value = width / height;
     horizonPass.uniforms.uTexel.value.set(1 / width, 1 / height);
+    rainPass.uniforms.uAspect.value = width / height;
+  };
+
+  const setDayTint = (tint: THREE.Color) => {
+    platePass.uniforms.uDayTint.value.set(tint.r, tint.g, tint.b);
+  };
+
+  const setRain = (amount: number, simTime: number) => {
+    rainPass.enabled = amount > 0.001;
+    rainPass.uniforms.uRain.value = amount;
+    rainPass.uniforms.uTime.value = simTime;
   };
 
   // The painted sea horizon sits at y=593 of the 1408x768 frame (measured), and
@@ -121,5 +144,5 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     );
   };
 
-  return { setSize, setFrameRect, render: () => composer.render() };
+  return { setSize, setFrameRect, setDayTint, setRain, render: () => composer.render() };
 }

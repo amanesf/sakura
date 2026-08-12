@@ -9,12 +9,6 @@ import {
 } from './clouds';
 import { CAMERA_VERTICAL_FOV_DEG } from '../core/camera';
 import { FRAME_WIDTH, FRAME_HEIGHT } from '../core/frame';
-import {
-  SKY_PRESETS,
-  coverageScaleFor,
-  weatherFor,
-  type SkyPresetName,
-} from './skyPresets';
 
 /**
  * A sky that keeps happening, rather than a fixed arrangement of clouds that
@@ -157,9 +151,12 @@ const TIERS: TierSpec[] = [
     levels: 22,
     puffsPerLevel: 15,
     margin: 6,
-    // No cumulonimbus on a clear day, and by the time it is about to rain the
-    // towers have spread into a deck rather than standing separately.
-    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.3, 0.55) * (1 - 0.5 * THREE.MathUtils.smoothstep(w, 0.75, 1)),
+    // The headline cloud, and what sets where the slider's landmarks fall:
+    // towers come in over 0.45-0.72 and are at full strength by ~0.7. Above
+    // 0.85 they give way again — a cumulonimbus does not stand out against a
+    // raining sky, by then it has merged into the deck.
+    coverageAt: (w) =>
+      THREE.MathUtils.smoothstep(w, 0.45, 0.72) * (1 - 0.55 * THREE.MathUtils.smoothstep(w, 0.85, 1)),
     shapeFor: (rand, w) => convectiveShape(rand, w, true),
   },
   {
@@ -175,9 +172,12 @@ const TIERS: TierSpec[] = [
     levels: 4,
     puffsPerLevel: 6,
     margin: 2,
-    // Fair-weather cumulus are the *clear* day's cloud; as the sky closes over
-    // they are absorbed into the deck rather than surviving under it.
-    coverageAt: (w) => 0.95 - 0.35 * w,
+    // Fair-weather cumulus need *some* instability to exist at all, so they
+    // start at 0.12 rather than being what an empty sky is full of. As the sky
+    // closes over they are absorbed into the deck rather than surviving under
+    // it.
+    coverageAt: (w) =>
+      THREE.MathUtils.smoothstep(w, 0.12, 0.4) * (1 - 0.8 * THREE.MathUtils.smoothstep(w, 0.6, 0.95)),
     shapeFor: (rand, w) => convectiveShape(rand, w, false),
   },
   {
@@ -198,7 +198,7 @@ const TIERS: TierSpec[] = [
     // tower measure 65-79% covered while the tower's own bands measure 25-31%.
     // Anything less than full coverage here left the lower sky too open, which
     // is the one place the eye reads "this is not the reference".
-    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.02, 0.42),
+    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.3, 0.8),
     shapeFor: (rand, w) => convectiveShape(rand, w, true),
   },
   {
@@ -214,7 +214,7 @@ const TIERS: TierSpec[] = [
     levels: 3,
     puffsPerLevel: 8,
     margin: 8,
-    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.0, 0.45),
+    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.25, 0.75),
     shapeFor: (rand, w) => convectiveShape(rand, w, true),
   },
   {
@@ -230,9 +230,16 @@ const TIERS: TierSpec[] = [
     levels: 3,
     puffsPerLevel: 8,
     margin: 10,
-    // The horizon band is never empty — even a clear day has haze and distant
-    // cumulus stacked along it.
-    coverageAt: (w) => 0.62 + 0.38 * THREE.MathUtils.smoothstep(w, 0.0, 0.4),
+    // The first cloud you get and the last one you lose. Full strength by 0.10,
+    // which is what makes the bottom of the slider read as "cloud, but all of
+    // it far away" rather than as an empty sky, then easing back at the rain
+    // end where the near deck is in front of it anyway.
+    //
+    // Its floor is 0, not the 0.62 it used to have. A permanently occupied
+    // horizon is right for a sky that is always some kind of weather, and wrong
+    // for a slider whose zero has to mean no cloud at all.
+    coverageAt: (w) =>
+      THREE.MathUtils.smoothstep(w, 0.0, 0.10) * (1 - 0.35 * THREE.MathUtils.smoothstep(w, 0.6, 1)),
     shapeFor: (rand, w) => convectiveShape(rand, w, false),
   },
   // --- The high layers ---
@@ -276,7 +283,8 @@ const TIERS: TierSpec[] = [
     // Middle cloud is the middle of the sequence that precedes rain (cirrus,
     // then altocumulus/altostratus, then the low deck), so it thickens as the
     // weather closes in and is patchy but present on a fair day.
-    coverageAt: (w) => 0.22 + 0.6 * THREE.MathUtils.smoothstep(w, 0.25, 0.85),
+    coverageAt: (w) =>
+      THREE.MathUtils.smoothstep(w, 0.05, 0.3) * (1 - 0.6 * THREE.MathUtils.smoothstep(w, 0.6, 1)),
     shapeFor: (rand) => {
       const shape = defaultClusterShape();
       shape.spread.set(1.6 + rand() * 1.0, 0.6 + rand() * 0.4);
@@ -322,7 +330,12 @@ const TIERS: TierSpec[] = [
     weatherLead: 3600,
     // Present on the clearest days (a blue sky with cirrus is the classic fair
     // summer sky) and the first thing to thicken when a front approaches.
-    coverageAt: (w) => 0.4 + 0.55 * THREE.MathUtils.smoothstep(w, 0.35, 0.95),
+    // Peaks early and then *withdraws*: cirrus does not go anywhere when the
+    // weather closes in, it simply stops being visible behind the lower cloud.
+    // That decline is much of why raising the slider reads as "the cloud is
+    // coming closer" rather than "more cloud is being added".
+    coverageAt: (w) =>
+      THREE.MathUtils.smoothstep(w, 0.02, 0.15) * (1 - 0.75 * THREE.MathUtils.smoothstep(w, 0.45, 0.9)),
     shapeFor: (rand) => {
       const shape = defaultClusterShape();
       // Drawn out hard along the wind and pinched across it: a streak, not a
@@ -429,11 +442,11 @@ interface Slot {
 }
 
 export interface CloudField {
-  /** Switch to a different sky. Every cluster is rebuilt on the next update so
-   * the change is immediate: a slot normally only re-rolls its coverage when it
-   * finishes a crossing, which at 1x is up to 102 minutes away, and a button
-   * that takes an hour to take effect is not a button. */
-  setPreset: (name: SkyPresetName) => void;
+  /** How much cloud, 0 (none) to 1 (raining). Every cluster is rebuilt on the
+   * next update so the change is immediate: a slot normally only re-rolls its
+   * coverage when it finishes a crossing, which at 1x is up to 102 minutes
+   * away, and a slider that takes an hour to take effect is not a slider. */
+  setCloudAmount: (amount: number) => void;
   update: (simTime: number) => void;
   /** Live counts, for the perf overlay. */
   stats: () => { clusters: number; rebuilds: number };
@@ -443,13 +456,23 @@ export function createCloudField(
   scene: THREE.Scene,
   materials: CloudMaterials,
   lightDir: THREE.Vector3,
-  initialPreset: SkyPresetName,
+  initialAmount: number,
 ): CloudField {
-  let preset = SKY_PRESETS[initialPreset];
+  let cloudAmount = THREE.MathUtils.clamp(initialAmount, 0, 1);
 
-  /** The weather a tier sees: the oscillator mapped into the current preset's
-   * window. */
-  const weatherAt = (simTime: number) => weatherFor(preset, weatherOscillation(simTime));
+  /**
+   * The weather a tier sees: the slider, plus a small residual wobble.
+   *
+   * The slider *is* the weather axis, so tiers are read at the value the user
+   * set. The wobble exists so a sky held at one setting still breathes rather
+   * than freezing into a fixed cloud amount — and it is scaled *by* the setting
+   * so that zero stays exactly zero. A "no cloud" position that still produced
+   * the occasional cloud would be a broken slider.
+   */
+  const weatherAt = (simTime: number) => {
+    const wobble = 0.06 * cloudAmount * (2 * weatherOscillation(simTime) - 1);
+    return THREE.MathUtils.clamp(cloudAmount + wobble, 0, 1);
+  };
   const slots: Slot[] = [];
   let id = 0;
   for (const tier of TIERS) {
@@ -494,7 +517,7 @@ export function createCloudField(
     // luck. Spreading the draws over the unit interval makes the count of active
     // slots track the coverage exactly instead of on average.
     const stratum = (slot.index + hash01(slot.id * 3.1, generation)) / tier.count;
-    slot.active = stratum < tier.coverageAt(coverageWeather) * coverageScaleFor(preset, tier.name);
+    slot.active = stratum < tier.coverageAt(coverageWeather);
     slot.z = -(tier.zNear + rand() * tier.zSpan);
     slot.generation = generation;
     if (!slot.active) return;
@@ -609,9 +632,10 @@ export function createCloudField(
     }
   }
 
-  function setPreset(name: SkyPresetName): void {
-    if (SKY_PRESETS[name] === preset) return;
-    preset = SKY_PRESETS[name];
+  function setCloudAmount(amount: number): void {
+    const next = THREE.MathUtils.clamp(amount, 0, 1);
+    if (next === cloudAmount) return;
+    cloudAmount = next;
     // NaN never equals the generation computed in update(), so every slot
     // rebuilds on the next frame — which is also what releases the old
     // clusters' GPU buffers, since buildSlot disposes before it rebuilds.
@@ -620,7 +644,7 @@ export function createCloudField(
 
   return {
     update,
-    setPreset,
+    setCloudAmount,
     stats: () => ({ clusters: slots.filter((s) => s.active).length, rebuilds }),
   };
 }

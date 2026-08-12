@@ -7,8 +7,12 @@ import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials } from './scene/clouds';
 import { createCloudField, NO_SHADOW_CAST_LAYER } from './scene/cloudField';
 import { createControls } from './ui/controls';
-import { DEFAULT_PRESET, isPresetName } from './scene/skyPresets';
-import { sunDirection } from './core/solarPosition';
+import {
+  CLOCK_END_HOUR,
+  CLOCK_START_HOUR,
+  cloudLightForElevation,
+  daylightAtHour,
+} from './core/daylight';
 import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
 
@@ -70,10 +74,6 @@ watchResize(renderer, (cssWidth, cssHeight) => {
   postFx.setFrameRect(rect);
 });
 
-// plan.md: 「まず日中だけでいい」— time-of-day t is fixed at 0 (day) for now.
-const TIME_OF_DAY_T = 0;
-const sunDir = sunDirection(TIME_OF_DAY_T);
-
 // Art-directed key light for the clouds — deliberately *not* the true sun
 // direction above. Per the Guilty Gear Xrd cel-shading research, professional
 // stylized 3D lighting is chosen for how the form reads, not physical
@@ -102,6 +102,12 @@ const CLOUD_LIGHT_DIR = LIGHT_QUERY
   ? new THREE.Vector3(...(LIGHT_QUERY.split(',').map(Number) as [number, number, number])).normalize()
   : new THREE.Vector3(-0.78, 0.45, -0.44).normalize();
 
+// Live vectors, rewritten by applyControls whenever the clock slider moves.
+// CLOUD_LIGHT_DIR above stays the *noon* value it was fitted as; cloudLight is
+// what the scene is actually shaded with, and the two are equal at 12:00.
+const sunDir = new THREE.Vector3();
+const cloudLight = CLOUD_LIGHT_DIR.clone();
+
 // No THREE.Light in the scene any more: the cloud material is unlit and
 // indexes a colour ramp measured out of the reference image (cloudRamp.ts),
 // and sky.ts is its own atmospheric-scattering shader. Adding a
@@ -123,14 +129,26 @@ const cloudShadow = createCloudShadow(CLOUD_LIGHT_DIR, CLOUD_FIELD_CENTER, 78, 2
 materials.core.uniforms.uShadowMap.value = cloudShadow.texture;
 materials.core.uniforms.uShadowMatrix.value = cloudShadow.matrix;
 
-// Which sky. The URL wins over the default so scripts/capture.js can measure a
-// named preset (`?preset=clear`) rather than whatever the console was last left
-// on — the same reason `?t=` exists.
+// Console starting values. The URL wins over the defaults so scripts/capture.js
+// can measure a named sky (`?cloud=0.62&rain=0&hour=12`) rather than whatever
+// the sliders were last left on — the same reason `?t=` exists. Omitting them
+// all gives exactly the noon, dry, reference-fitted frame every statistic in
+// this project was measured against.
 const query = new URLSearchParams(window.location.search);
-const presetParam = query.get('preset');
-const initialPreset = isPresetName(presetParam) ? presetParam : DEFAULT_PRESET;
+const numeric = (key: string): number | undefined => {
+  const raw = query.get(key);
+  if (raw === null) return undefined;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : undefined;
+};
+const initial = {
+  cloud: numeric('cloud'),
+  rain: numeric('rain'),
+  hour: numeric('hour'),
+  speed: numeric('speed'),
+};
 
-const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR, initialPreset);
+const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR, initial.cloud ?? 0.62);
 
 // The high tiers (cirrus, altocumulus) live on their own layer so the shadow
 // camera — which stays on layer 0 — never sees them. The view camera has to be
@@ -142,19 +160,65 @@ camera.layers.enable(NO_SHADOW_CAST_LAYER);
 // fill the light-space depth map entirely.
 const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
 
-// Playback speed. Real clouds are slow — the hero tower crosses the frame in 69
-// minutes on a 7 m/s wind — so the app is watchable at 1x but only really shows
-// its weather when run up. The slider goes to 30x, where a crossing takes 2.3
-// minutes and a cumulonimbus lives about two.
-const controls = createControls(initialPreset);
-controls.onPreset((name) => cloudField.setPreset(name));
+const controls = createControls(initial);
+
+// Everything the console drives, applied once per frame rather than on change
+// events: three of the four sliders feed values that also have to be re-derived
+// when simTime moves anyway, and a single place that reads them cannot drift
+// out of step with itself.
+let appliedCloud = -1;
+let appliedHour = Number.NaN;
+
+function applyControls(simTime: number): void {
+  const cloud = controls.cloudAmount();
+  if (cloud !== appliedCloud) {
+    appliedCloud = cloud;
+    cloudField.setCloudAmount(cloud);
+  }
+
+  const hour = THREE.MathUtils.clamp(controls.hour(), CLOCK_START_HOUR, CLOCK_END_HOUR);
+  if (hour !== appliedHour) {
+    appliedHour = hour;
+    const daylight = daylightAtHour(hour);
+    sunDir.copy(daylight.sunDir);
+    // The cloud key light keeps its fitted bearing and only loses elevation —
+    // see core/daylight.ts for why it is not simply swung onto the sun.
+    cloudLight.copy(cloudLightForElevation(CLOUD_LIGHT_DIR, daylight.elevationDeg));
+    materials.core.uniforms.uLightDir.value.copy(cloudLight);
+    materials.core.uniforms.uSunTint.value.set(
+      daylight.sunTint.r, daylight.sunTint.g, daylight.sunTint.b,
+    );
+    materials.core.uniforms.uSkyTint.value.set(
+      daylight.skyTint.r, daylight.skyTint.g, daylight.skyTint.b,
+    );
+    materials.core.uniforms.uDayBlend.value = daylight.blend;
+    cloudShadow.setLightDirection(cloudLight);
+    postFx.setDayTint(daylight.plateTint);
+  }
+
+  postFx.setRain(controls.rainAmount(), simTime);
+}
 
 // Simulated seconds. Every cluster's position, age and weather is a pure
 // function of this one number (scene/cloudField.ts), which is what lets
 // scripts/capture.js freeze the scene with ?t= and get the same frame every
 // time no matter what speed the slider was left at.
+// A different sky every time the app is opened.
+//
+// The whole scene is a pure function of simTime, so this needs no extra seed
+// and no extra state: starting the clock at a random point simply lands in a
+// different part of a sequence that never repeats. Every cluster is at a
+// different stage of a different crossing, built from a different generation
+// index, so the arrangement, the shapes and the phases are all new.
+//
+// The range is about 55 hours of simulated time — some 33 tower crossings —
+// which is far more than enough to decorrelate from the last visit while
+// staying well inside the precision where the boil phases stay smooth.
+//
+// `?t=` still wins, which is what keeps scripts/capture.js reproducible: a
+// measurement asks for a specific second and gets that second.
 const frozen = new URLSearchParams(window.location.search).get('t');
-let simTime = frozen !== null ? Number(frozen) : 0;
+let simTime = frozen !== null ? Number(frozen) : Math.random() * 200000;
 const clock = new THREE.Clock();
 
 function renderLoop() {
@@ -162,6 +226,7 @@ function renderLoop() {
   const dt = clock.getDelta();
   if (frozen === null) simTime += dt * controls.timeScale();
 
+  applyControls(simTime);
   updateSky(sky, camera, sunDir);
   cloudField.update(simTime);
 

@@ -273,6 +273,20 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // s = 0.11, and the ambient floor and the relaxed occlusion/shadow/wash
       // terms above account for about 0.35 of that 0.58 gap between them.
       uBias: { value: -0.38 },
+      // Time of day, as an illuminant (core/daylight.ts). Both are exactly
+      // white at noon, so the measured ramp is untouched there and every
+      // statistic in this project still holds.
+      //
+      // Two of them, not one, because a cloud at sunset is not a cloud with an
+      // orange filter over it: its crown is lit by a low red sun while its
+      // underside is lit by the sky dome, which has gone blue-violet. Applying
+      // one tint uniformly loses exactly the split that makes an evening cloud
+      // read as evening.
+      uSunTint: { value: new THREE.Vector3(1, 1, 1) },
+      uSkyTint: { value: new THREE.Vector3(1, 1, 1) },
+      // How far the clouds move off their measured midday colours. 0 at noon,
+      // so the ramp — and every statistic fitted to it — is untouched there.
+      uDayBlend: { value: 0 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -358,6 +372,9 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform float uRimStrength;
       uniform float uContrast;
       uniform float uBias;
+      uniform vec3 uSunTint;
+      uniform vec3 uSkyTint;
+      uniform float uDayBlend;
 
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
@@ -567,6 +584,24 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         color = mix(color, uWhiteHDR, clamp(hot * uHighlightGain, 0.0, 1.0) * clear * clear);
 
         color = mix(color, uHazeColor, haze);
+
+        // Relight for the hour. Applied last, to everything — the white crown
+        // and the hazed distance are as much a part of an evening as the ramp
+        // is. s is the shading term, so the crown takes the sun's colour and
+        // the crevices take the sky's.
+        //
+        // A blend toward the cloud's own *luminance* carrying the illuminant,
+        // not a multiply. Multiplying was tried first and is wrong for a
+        // measured ramp: the ramp already encodes a specific midday hue, so
+        // multiplying a saturated evening light through it compounds two hues
+        // instead of replacing one. What that produced at 18:36 was cloud in
+        // vivid cerulean with pure yellow highlights — the ramp's blue shadow
+        // end times a blue sky tint, and its white crown times a beam whose
+        // blue channel had gone to zero. Relighting a surface means keeping how
+        // bright it is and taking the light's colour, which is exactly this.
+        vec3 illum = mix(uSkyTint, uSunTint, s);
+        float lum = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        color = mix(color, lum * illum, uDayBlend);
 
         gl_FragColor = vec4(color, 1.0);
       }`,

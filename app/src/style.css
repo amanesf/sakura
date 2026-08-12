@@ -199,77 +199,46 @@ body {
   padding: 20px max(18px, env(safe-area-inset-left)) 0 max(18px, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 13px;
 }
 
-/* Segmented control for the sky presets. Pills rather than tabs: there is no
-   content "under" them, they are two states of one sky. */
-.modes {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-}
-
-.mode {
-  flex: 0 1 auto;
-  min-width: 96px;
-  padding: 9px 16px;
-  border: 1px solid rgba(124, 198, 240, 0.28);
-  border-radius: 999px;
-  background: rgba(124, 198, 240, 0.05);
-  color: var(--text-dim);
-  font: 500 13px/1 system-ui, sans-serif;
-  letter-spacing: 0.14em;
-  cursor: pointer;
-  transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease,
-    box-shadow 0.25s ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mode:hover {
-  color: var(--text);
-  border-color: rgba(124, 198, 240, 0.5);
-}
-
-.mode[aria-pressed='true'] {
-  color: #06131f;
-  border-color: transparent;
-  background: linear-gradient(180deg, #a9dcf7, #6fb9e4);
-  box-shadow: 0 0 18px rgba(124, 198, 240, 0.45);
-}
-
-/* Speed. A thin lit line rather than a chunky slider — the same visual family
-   as the title's glow, so the console reads as one instrument. */
-.speed {
+/* A thin lit line rather than a chunky slider — the same visual family as the
+   title's glow, so the console reads as one instrument. Four of them now
+   (cloud, rain, time, speed), so the row has to stay quiet: a fixed-width
+   label column and a fixed-width readout column keep the tracks aligned with
+   each other, which is most of what makes a stack of sliders look built rather
+   than assembled. */
+.slider {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
 }
 
-.speed__label {
+.slider__label {
   flex: none;
+  width: 3.6em;
   font: 500 9px/1 system-ui, sans-serif;
-  letter-spacing: 0.3em;
+  letter-spacing: 0.22em;
   color: var(--text-dim);
 }
 
-.speed__value {
+.slider__value {
   flex: none;
-  min-width: 3.4em;
+  min-width: 3.9em;
   text-align: right;
   font: 600 15px/1 ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
-.speed__value i {
+.slider__value i {
   font-style: normal;
   font-size: 0.7em;
   margin-left: 0.15em;
   color: var(--text-dim);
 }
 
-.speed__slider {
+.slider__input {
   flex: 1;
   height: 34px; /* touch target, not the visual height of the track */
   background: transparent;
@@ -280,7 +249,7 @@ body {
   --fill: 0%;
 }
 
-.speed__slider::-webkit-slider-runnable-track {
+.slider__input::-webkit-slider-runnable-track {
   height: 2px;
   border-radius: 2px;
   background: linear-gradient(
@@ -292,7 +261,7 @@ body {
   );
 }
 
-.speed__slider::-webkit-slider-thumb {
+.slider__input::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
   width: 14px;
@@ -303,19 +272,19 @@ body {
   box-shadow: 0 0 0 5px rgba(124, 198, 240, 0.18), 0 0 14px rgba(124, 198, 240, 0.8);
 }
 
-.speed__slider::-moz-range-track {
+.slider__input::-moz-range-track {
   height: 2px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.16);
 }
 
-.speed__slider::-moz-range-progress {
+.slider__input::-moz-range-progress {
   height: 2px;
   border-radius: 2px;
   background: var(--accent);
 }
 
-.speed__slider::-moz-range-thumb {
+.slider__input::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border: 0;

@@ -25,8 +25,15 @@ import * as THREE from 'three';
  */
 export interface CloudShadow {
   texture: THREE.Texture;
-  /** World space -> light clip space. Feed to the cloud material. */
+  /** World space -> light clip space. Feed to the cloud material.
+   * Mutated in place by setLightDirection, so the material's uniform keeps
+   * pointing at the same object. */
   matrix: THREE.Matrix4;
+  /** Re-aim the light camera. The key light is no longer fixed — it flattens
+   * onto the horizon as the sun sets (core/daylight.ts) — and a depth map still
+   * rendered from the noon direction would put every cloud's shadow on the
+   * wrong side of it at dusk. */
+  setLightDirection: (direction: THREE.Vector3) => void;
   update: (renderer: THREE.WebGLRenderer, scene: THREE.Scene, hidden: THREE.Object3D[]) => void;
   dispose: () => void;
 }
@@ -79,11 +86,16 @@ export function createCloudShadow(
     -fieldRadius, fieldRadius, fieldRadius, -fieldRadius,
     0.1, fieldRadius * 4,
   );
-  camera.position.copy(lightDirection).normalize().multiplyScalar(fieldRadius * 2).add(fieldCenter);
-  camera.lookAt(fieldCenter);
-  camera.updateMatrixWorld(true);
 
-  const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const matrix = new THREE.Matrix4();
+
+  const setLightDirection = (direction: THREE.Vector3) => {
+    camera.position.copy(direction).normalize().multiplyScalar(fieldRadius * 2).add(fieldCenter);
+    camera.lookAt(fieldCenter);
+    camera.updateMatrixWorld(true);
+    matrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  };
+  setLightDirection(lightDirection);
 
   const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
 
@@ -107,6 +119,7 @@ export function createCloudShadow(
   return {
     texture: target.texture,
     matrix,
+    setLightDirection,
     update,
     dispose: () => { target.dispose(); depthMaterial.dispose(); },
   };

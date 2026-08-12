@@ -21,6 +21,9 @@ export const PlateShader = {
     tPlate: { value: null as THREE.Texture | null },
     /** xy = uv origin, zw = uv size, of the visible sub-rect (core/frame.ts). */
     uPlateRect: { value: new THREE.Vector4(0, 0, 1, 1) },
+    /** Illuminant for the painted plate — white at noon. See the fragment
+     * shader below and core/daylight.ts. */
+    uDayTint: { value: new THREE.Vector3(1, 1, 1) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -33,12 +36,19 @@ export const PlateShader = {
     uniform sampler2D tDiffuse;
     uniform sampler2D tPlate;
     uniform vec4 uPlateRect;
+    // Time of day. The plate is one painting made at midday and cannot relight
+    // itself, so without this the sky turns to evening behind a room that is
+    // still lit for noon — which reads as a compositing error rather than as a
+    // time of day. White at noon (core/daylight.ts), so the measure loop is
+    // unaffected. Only the plate is multiplied: the rendered sky and clouds
+    // have already had the hour applied by their own shaders.
+    uniform vec3 uDayTint;
     varying vec2 vUv;
 
     void main() {
       vec4 sky = texture2D(tDiffuse, vUv);
       vec4 plate = texture2D(tPlate, uPlateRect.xy + vUv * uPlateRect.zw);
-      gl_FragColor = vec4(mix(sky.rgb, plate.rgb, plate.a), 1.0);
+      gl_FragColor = vec4(mix(sky.rgb, plate.rgb * uDayTint, plate.a), 1.0);
     }
   `,
 };
