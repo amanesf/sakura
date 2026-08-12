@@ -214,8 +214,17 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // 9px -> 16px, i.e. straight back to where the deleted fringe shell had
       // them, and the lateral read collapsed from 12.0 to 2.7. The bank has to
       // be brought down without touching the tower's distance term.
+      // Start held at 12km; density 0.033 -> 0.060. Only the density moves,
+      // deliberately: it is monotonic in the safe direction, adding haze to the
+      // bank *and* to the tower, where the failed attempt above had removed it
+      // from the tower and set off the glare. The rows the bank occupies turned
+      // out to be the near tier at 26-42km, sitting at a haze of only 0.37-0.63
+      // and therefore still nearly its own colour; at 0.060 that becomes
+      // 0.57-0.84 and it can actually reach the haze target. The tower goes
+      // from 0.15 to 0.26, which now *darkens* it slightly rather than bleaching
+      // it, because the haze colour is no longer near-white.
       uHazeStart: { value: 12.0 },
-      uHazeDensity: { value: 0.033 },
+      uHazeDensity: { value: 0.060 },
       uHazeMax: { value: 0.96 },
       // Cut hard from 0.45. With the lobe count raised to reference density,
       // nearly every pixel of the silhouette is near some lobe's grazing
