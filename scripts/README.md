@@ -168,3 +168,32 @@ frame.** `preserveDrawingBuffer` is false, so a read issued from a separate
 task gets a cleared buffer and returns the same blank image every time. A test
 written the other way reported "the sky preset button does nothing" for a
 button that was working perfectly.
+
+# scripts/shoot.js — several captures from one page load
+
+**Use this instead of running `capture.js` in a loop.**
+
+```sh
+node scripts/shoot.js \
+  out=/tmp/noon.png,t=5580,cloud=0.62,rain=0,hour=12 \
+  out=/tmp/overcast.png,cloud=1 \
+  out=/tmp/rain.png,rain=1
+```
+
+Each argument is one frame; unstated keys carry over from the previous frame,
+so a sweep only states what changes. It implies `?fit=frame`, and it retargets
+the scene through `window.__sakura.set()` (main.ts) rather than reloading, so
+the shader compile and browser start are paid once for the whole sweep instead
+of once per image. Measured: four frames in 11.6 min against roughly 16 min as
+four separate `capture.js` runs.
+
+The remaining cost is the rendering itself — about 20s per 1408x768 frame
+through the post chain under SwiftShader — so the two levers that matter are:
+
+- `WARMUP` (default 3): frames rendered before each read. This multiplies the
+  whole run.
+- `CAPTURE_W`/`CAPTURE_H`: cost is per pixel, so halving both is about four
+  times quicker. Fine for looking at a design, never for measuring.
+
+`capture.js` is still the right tool for a single frame or for anything that
+needs the cold-start path.

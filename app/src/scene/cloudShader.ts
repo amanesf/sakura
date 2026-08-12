@@ -287,6 +287,23 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // How far the clouds move off their measured midday colours. 0 at noon,
       // so the ramp — and every statistic fitted to it — is untouched there.
       uDayBlend: { value: 0 },
+      // How closed the sky is, 0 until the cloud slider passes about three
+      // quarters and 1 at the top.
+      //
+      // The measured ramp cannot express an overcast base, and that is not a
+      // fault in it: it was sampled from a sunlit cumulus in the reference
+      // image, so its dark end is the cerulean of sky showing through a gap,
+      // not the grey of a cloud you cannot see the sun through. Asking it for
+      // 曇天 gives a bright blue-white ceiling however much geometry is thrown
+      // at it.
+      //
+      // A deck thick enough to close the sky is thick enough to stop the sun,
+      // so its base is lit only by light that has been scattered many times on
+      // its way through — which is both darker and much less coloured than
+      // direct light. That is a statement about the illumination, not about the
+      // palette, so it belongs here as a global rather than as an edit to the
+      // measured table.
+      uOvercast: { value: 0 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -375,6 +392,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform vec3 uSunTint;
       uniform vec3 uSkyTint;
       uniform float uDayBlend;
+      uniform float uOvercast;
 
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
@@ -584,6 +602,12 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         color = mix(color, uWhiteHDR, clamp(hot * uHighlightGain, 0.0, 1.0) * clear * clear);
 
         color = mix(color, uHazeColor, haze);
+
+        // Overcast: multiply-scattered light only. Applied before the hour,
+        // because it is about how the light reaches the cloud and the hour is
+        // about what colour that light is.
+        float overcastGrey = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        color = mix(color, mix(color, vec3(overcastGrey), 0.55) * 0.45, uOvercast);
 
         // Relight for the hour. Applied last, to everything — the white crown
         // and the hazed distance are as much a part of an evening as the ramp

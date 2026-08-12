@@ -174,6 +174,10 @@ function applyControls(simTime: number): void {
   if (cloud !== appliedCloud) {
     appliedCloud = cloud;
     cloudField.setCloudAmount(cloud);
+    // Same threshold as the overcast tier in cloudField.ts: past three quarters
+    // the sky stops being a collection of clouds and becomes a ceiling, and the
+    // light under a ceiling is different light.
+    materials.core.uniforms.uOvercast.value = THREE.MathUtils.smoothstep(cloud, 0.72, 1.0);
   }
 
   const hour = THREE.MathUtils.clamp(controls.hour(), CLOCK_START_HOUR, CLOCK_END_HOUR);
@@ -193,7 +197,7 @@ function applyControls(simTime: number): void {
     );
     materials.core.uniforms.uDayBlend.value = daylight.blend;
     cloudShadow.setLightDirection(cloudLight);
-    postFx.setDayTint(daylight.plateTint);
+    postFx.setDaylight(daylight);
   }
 
   postFx.setRain(controls.rainAmount(), simTime);
@@ -217,14 +221,16 @@ function applyControls(simTime: number): void {
 //
 // `?t=` still wins, which is what keeps scripts/capture.js reproducible: a
 // measurement asks for a specific second and gets that second.
-const frozen = new URLSearchParams(window.location.search).get('t');
-let simTime = frozen !== null ? Number(frozen) : Math.random() * 200000;
+const frozen = query.get('t');
+let frozenTime: number | null = frozen !== null ? Number(frozen) : null;
+let simTime = frozenTime ?? Math.random() * 200000;
 const clock = new THREE.Clock();
 
 function renderLoop() {
   requestAnimationFrame(renderLoop);
   const dt = clock.getDelta();
-  if (frozen === null) simTime += dt * controls.timeScale();
+  if (frozenTime === null) simTime += dt * controls.timeScale();
+  else simTime = frozenTime;
 
   applyControls(simTime);
   updateSky(sky, camera, sunDir);
@@ -235,5 +241,31 @@ function renderLoop() {
 
   postFx.render();
 }
+
+/**
+ * Capture hook.
+ *
+ * scripts/shoot.js drives this to photograph several settings from one page
+ * load. That is not a convenience: under SwiftShader almost all of a capture's
+ * cost is starting a browser and compiling this scene's shaders, so a sweep
+ * done by reloading the page pays that once per frame. Retargeting in place
+ * pays it once for the whole sweep, which took a four-frame set from about
+ * fifteen minutes to about four.
+ *
+ * Everything it can set is something the URL can already set, so it grants the
+ * harness no reach the address bar does not have.
+ */
+(window as unknown as { __sakura?: unknown }).__sakura = {
+  set(params: { t?: number; cloud?: number; rain?: number; hour?: number }) {
+    if (params.t !== undefined) {
+      frozenTime = params.t;
+      simTime = params.t;
+    }
+    for (const key of ['cloud', 'rain', 'hour'] as const) {
+      const value = params[key];
+      if (value !== undefined) controls.setValue(key, value);
+    }
+  },
+};
 
 renderLoop();

@@ -24,10 +24,14 @@
      reads as one continuous graded field rather than a photo pasted on black.
      Sampled off the plate's own sky so the spill looks like light coming from
      the picture rather than a coloured panel behind it. */
-  --ink: #04060b;
-  --ink-mid: #071426;
-  --lit: #10314e;
-  --spill: rgba(96, 178, 232, 0.42);
+  /* Darker than it was. The first pass lit the whole page to a mid blue, and a
+     page that is all one value has no light in it — the picture stopped being
+     the brightest thing on screen, which is the entire premise. The glow is now
+     tight around the picture and everything else falls away to ink. */
+  --ink: #03050a;
+  --ink-mid: #050d18;
+  --lit: #0b2036;
+  --spill: rgba(96, 178, 232, 0.34);
 
   /* Where the picture's lower edge falls, as a fraction of the viewport. The
      ambience is aimed at this line rather than at the middle of the screen:
@@ -89,18 +93,22 @@ body {
      Bottom to top in paint order: the base grade, a wide soft pool, then a
      tighter hot core right at the edge. */
   background:
-    radial-gradient(90% 22% at 50% var(--stage-foot), var(--spill) 0%, transparent 70%),
+    /* A vignette, so the page has corners. Without it the field runs flat to
+       the edges of the screen and the whole thing reads as a coloured
+       background rather than as a lit space. */
+    radial-gradient(120% 70% at 50% 42%, transparent 30%, rgba(0, 0, 0, 0.55) 100%),
+    radial-gradient(70% 16% at 50% var(--stage-foot), var(--spill) 0%, transparent 72%),
     radial-gradient(
-      150% 42% at 50% var(--stage-foot),
-      rgba(96, 178, 232, 0.2) 0%,
-      rgba(96, 178, 232, 0.06) 45%,
-      transparent 78%
+      130% 30% at 50% var(--stage-foot),
+      rgba(96, 178, 232, 0.16) 0%,
+      rgba(96, 178, 232, 0.04) 45%,
+      transparent 80%
     ),
     linear-gradient(
       to bottom,
-      var(--lit) 0%,
-      var(--lit) calc(var(--stage-foot) - 40px),
-      var(--ink-mid) calc(var(--stage-foot) + 34vh),
+      var(--ink-mid) 0%,
+      var(--lit) calc(var(--stage-foot) - 30px),
+      var(--ink-mid) calc(var(--stage-foot) + 26vh),
       var(--ink) 100%
     );
 }
@@ -134,13 +142,53 @@ body {
   letter-spacing: 0.08em;
   line-height: 1.5;
   color: var(--text);
-  /* A faint glow rather than a drop shadow: the title should look lit by the
-     same source as the page, not stamped on top of it. */
-  text-shadow: 0 0 22px rgba(124, 198, 240, 0.35), 0 1px 2px rgba(0, 0, 0, 0.6);
+  /* Three layers: a real cast shadow so the type sits above the page, a
+     tighter dark one to keep it legible over the lit part of the gradient, and
+     the glow so it still looks lit by the same source rather than stamped on. */
+  text-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.75),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 26px rgba(124, 198, 240, 0.4);
+}
+
+/* The rule under the title. Fades out at both ends instead of stopping, so it
+   reads as a highlight catching the type from below rather than as a border —
+   a hard-ended line would box the title in and fight the bleed-off-the-edges
+   logic the rest of the page is built on. */
+/* The rule was there in the first version and effectively invisible — a 1px
+   line at 0.75 alpha over a lit gradient reads as nothing. It carries a real
+   value now, and a small diamond sits on it: a bare line is a border, a line
+   with a mark on it is a title rule. */
+.title__rule {
+  position: relative;
+  width: min(76%, 330px);
+  height: 1px;
+  margin: 14px auto 0;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(150, 208, 244, 0.35) 14%,
+    rgba(226, 243, 253, 0.95) 50%,
+    rgba(150, 208, 244, 0.35) 86%,
+    transparent
+  );
+  box-shadow: 0 0 14px rgba(124, 198, 240, 0.75);
+}
+
+.title__rule::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  background: #eaf6ff;
+  box-shadow: 0 0 10px rgba(160, 214, 246, 0.95);
 }
 
 .title__sub {
-  margin: 8px 0 0;
+  margin: 11px 0 0;
   font: 400 9px/1 system-ui, sans-serif;
   letter-spacing: 0.42em;
   /* Tracking pushes the line right by one space's worth; pulling it back keeps

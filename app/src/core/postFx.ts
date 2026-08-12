@@ -9,13 +9,15 @@ import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
 import { PlateShader } from '../effects/plateShader';
 import { RainShader } from '../effects/rainShader';
+import { relightForDay, type Daylight } from './daylight';
 import { HorizonHazeShader } from '../effects/horizonHaze';
 import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
-  /** Illuminant for the painted plate — white at noon (core/daylight.ts). */
-  setDayTint: (tint: THREE.Color) => void;
+  /** Apply the hour to everything in the post chain that was authored for
+   * midday: the painted plate, and the horizon haze band. */
+  setDaylight: (day: Daylight) => void;
   /** Rain, 0-1, and the clock it falls on (simTime, so captures reproduce). */
   setRain: (amount: number, simTime: number) => void;
   /** The visible sub-rect of the reference's frame — drives both the plate's UVs
@@ -115,8 +117,26 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     rainPass.uniforms.uAspect.value = width / height;
   };
 
-  const setDayTint = (tint: THREE.Color) => {
-    platePass.uniforms.uDayTint.value.set(tint.r, tint.g, tint.b);
+  // The haze band's midday colour, kept so the hour can be applied to it
+  // without accumulating.
+  const baseHazeColor = new THREE.Color().fromArray(
+    horizonPass.uniforms.uHazeColor.value.toArray(),
+  );
+
+  const setDaylight = (day: Daylight) => {
+    const plate = day.plateTint;
+    platePass.uniforms.uDayTint.value.set(plate.r, plate.g, plate.b);
+
+    // The band that fills the bottom of the sky was a fixed pale midday blue
+    // applied at 0.72 strength, so it pinned the lower sky bright and blue at
+    // every hour — measured, the 18:36 sky was still at luminance 173 near the
+    // horizon against midday's 181, i.e. it had barely dimmed at all while the
+    // sun was setting. It is horizon haze: aerosol lit by whatever light is
+    // around, so it has to take the hour like everything else. Weighted toward
+    // the lit illuminant because the low sky along a long horizon path is lit
+    // mostly by the direct beam.
+    const haze = relightForDay(baseHazeColor, day, 0.65);
+    horizonPass.uniforms.uHazeColor.value.set(haze.r, haze.g, haze.b);
   };
 
   const setRain = (amount: number, simTime: number) => {
@@ -144,5 +164,5 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     );
   };
 
-  return { setSize, setFrameRect, setDayTint, setRain, render: () => composer.render() };
+  return { setSize, setFrameRect, setDaylight, setRain, render: () => composer.render() };
 }

@@ -22,6 +22,9 @@ export interface Controls {
   rainAmount: () => number;
   /** Clock hour, 12.0 .. 19.0. */
   hour: () => number;
+  /** Move a slider from code, as if the user had. Used by the capture harness
+   * (scripts/shoot.js) to retarget the scene without reloading the page. */
+  setValue: (key: string, value: number) => void;
 }
 
 interface SliderSpec {
@@ -106,6 +109,7 @@ const SLIDERS: SliderSpec[] = [
 export function createControls(initial: Partial<Record<string, number>> = {}): Controls {
   const host = document.querySelector('.console') ?? document.body;
   const values = new Map<string, number>();
+  const setters = new Map<string, (value: number) => void>();
 
   for (const spec of SLIDERS) {
     const row = document.createElement('div');
@@ -142,6 +146,10 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
     };
 
     input.addEventListener('input', sync);
+    setters.set(spec.key, (value) => {
+      input.value = String(value);
+      sync();
+    });
     row.append(label, input, readout);
     host.appendChild(row);
     sync();
@@ -149,6 +157,7 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
 
   const read = (key: string) => values.get(key) ?? 0;
   return {
+    setValue: (key, value) => setters.get(key)?.(value),
     timeScale: () => read('speed'),
     cloudAmount: () => read('cloud'),
     rainAmount: () => read('rain'),

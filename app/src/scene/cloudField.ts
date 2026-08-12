@@ -356,6 +356,70 @@ const TIERS: TierSpec[] = [
       return shape;
     },
   },
+  {
+    /**
+     * The ceiling. Only exists at the top of the cloud slider, and it is the
+     * tier that makes 100% read as 曇天 rather than as a lot of cumulus.
+     *
+     * Everything else in this file sits 15-90km away, because that is where
+     * cloud you are *looking at* lives. An overcast deck is not something you
+     * look at, it is something you are underneath: to cover the top of a frame
+     * that reaches 36 degrees of elevation, cloud at 1.5km has to be about 2km
+     * away, not 20. That geometry is the whole reason widening and lowering the
+     * existing deck tiers could not close the sky on its own — a 1.3km-high
+     * sheet 20km out subtends four degrees and sits on the horizon, however
+     * wide it is made.
+     *
+     * So this is its own tier with its own distances, which also keeps the
+     * crossing arithmetic honest: tierSpan is derived from zNear, and moving an
+     * existing tier's clusters closer without moving its span would have left
+     * them off-screen for most of their lives.
+     *
+     * Twenty smallish clusters rather than a few large ones, and five levels
+     * deep rather than two. The first attempt used six-kilometre masses four
+     * kilometres away, and one of them covered the entire frame: the sky was
+     * certainly closed, but by a single smooth slab with one enormous diagonal
+     * edge across it. An overcast ceiling is ragged and continuous, which takes
+     * many overlapping masses, and it is *grey*, which takes depth — the lobes
+     * on the underside have to be buried under several levels of cloud before
+     * the baked optical-depth term has anything to darken them with.
+     *
+     * NOTE: appended at the end of TIERS on purpose. Slot ids are handed out in
+     * array order and seed every cluster's random stream, so inserting a tier
+     * in the middle silently reshuffles every tier after it — which it did,
+     * and which made a noon capture that should have been untouched differ from
+     * its predecessor across 17% of its pixels.
+     */
+    name: 'overcast',
+    count: 20,
+    zNear: 4.5,
+    zSpan: 12,
+    baseAlt: 1.0,
+    topLo: 2.6,
+    topHi: 3.8,
+    radLo: 2.0,
+    radHi: 3.8,
+    levels: 5,
+    puffsPerLevel: 12,
+    margin: 6,
+    // Nothing at all until the slider's last quarter, then everything.
+    coverageAt: (w) => THREE.MathUtils.smoothstep(w, 0.72, 0.97),
+    shapeFor: (rand) => {
+      const shape = defaultClusterShape();
+      // Drawn out flat in both directions — this is a sheet, not a heap.
+      shape.spread.set(1.5 + rand() * 0.8, 1.2 + rand() * 0.7);
+      shape.lean.set(0.2 + rand() * 0.4, 0);
+      shape.puffStretch.set(1.15 + rand() * 0.3, 0.5 + rand() * 0.18, 1.15 + rand() * 0.3);
+      // Coarse and heavily overlapped: an overcast base is a continuous
+      // ragged ceiling, not a crowd of separate lobes with sky between them.
+      shape.grainCap = 0.17 + rand() * 0.09;
+      shape.grainCapCore = 0.5 + rand() * 0.18;
+      shape.satellites = 1.8 + rand() * 1.0;
+      shape.boil = 0.03 + rand() * 0.03;
+      shape.boilPeriod = 260 + rand() * 200;
+      return shape;
+    },
+  },
 ];
 
 /**
@@ -522,7 +586,32 @@ export function createCloudField(
     slot.generation = generation;
     if (!slot.active) return;
 
-    const radius = tier.radLo + rand() * (tier.radHi - tier.radLo);
+    /**
+     * How far into overcast this cloud was born. 0 for anything below about
+     * three quarters of the slider; 1 at the top.
+     *
+     * The coverage curves alone cannot produce a 曇天. They decide *how many*
+     * clusters exist, and by 0.8 the deck tiers are already at 1.0 — every slot
+     * filled — so the top fifth of the slider had nothing left to say. What was
+     * still wrong at that point is geometric: the deck was a scattering of
+     * separate 5km masses with 4-6km of vertical development, sitting 2.3km up.
+     * That is a field of big cumulus seen from below, not a closed sky.
+     *
+     * An overcast deck is the opposite shape — low, flat, and continuous. So
+     * the top of the slider stops adding clouds and starts changing what a
+     * cloud *is*: wider, so neighbours merge into a sheet; lower, so it sits on
+     * top of you; and much shallower, so it reads as a ceiling rather than as
+     * heaped-up towers.
+     */
+    const overcast = THREE.MathUtils.smoothstep(weather, 0.72, 1.0);
+    const isDeck = tier.name === 'deck-near' || tier.name === 'deck-mid';
+
+    // Wide enough to overlap its neighbours rather than stand next to them.
+    // This is what closes the sky: coverage 1.0 with 5km masses still leaves
+    // blue between them, and no number of extra slots fixes that as reliably as
+    // making each one bigger does.
+    const radius = (tier.radLo + rand() * (tier.radHi - tier.radLo)) *
+      (isDeck ? THREE.MathUtils.lerp(1, 1.8, overcast) : 1);
     // A pre-rain sky is lower and flatter; a clear one is shallow fair-weather
     // cumulus. Both come out of the same tier by moving base and top, not by
     // swapping in different-looking clouds.
@@ -533,17 +622,43 @@ export function createCloudField(
     // apply to them dropped the cirrus deck from 9km to 5km on a humid day,
     // where it would be sitting inside the middle cloud.
     const altitudeFollowsWeather = tier.baseAlt < 4;
-    const baseAlt = altitudeFollowsWeather
+    const baseAlt = (altitudeFollowsWeather
       ? tier.baseAlt * THREE.MathUtils.lerp(1.15, 0.55, weather)
-      : tier.baseAlt;
-    const top = baseAlt + (tier.topLo + rand() * (tier.topHi - tier.topLo) - tier.baseAlt) *
+      : tier.baseAlt) * (isDeck ? THREE.MathUtils.lerp(1, 0.62, overcast) : 1);
+    const rawTop = baseAlt + (tier.topLo + rand() * (tier.topHi - tier.topLo) - tier.baseAlt) *
       (altitudeFollowsWeather ? THREE.MathUtils.lerp(0.8, 1.15, weather) : 1);
+    // Flattened into a ceiling. A stratocumulus deck is on the order of a
+    // kilometre thick over hundreds of kilometres across; keeping the 4-6km of
+    // vertical development the fair-weather deck has is what kept the top of
+    // the slider looking like heaped cumulus rather than like a closed sky.
+    //
+    // Guarded on `overcast` and not merely blended by it, because the extra
+    // rand() draw is itself observable. JavaScript evaluates both arguments of
+    // a lerp, so writing this as lerp(rawTop, base + rand(), overcast) pulled a
+    // number out of the cluster's random stream even when overcast was 0 —
+    // shifting every later draw (level count, lobe count, profile jitter, the
+    // whole ClusterShape) for both deck tiers. The result was a midday sky that
+    // had no business changing and changed across 16% of its pixels. In a
+    // system whose entire reproducibility rests on seeded streams, where a
+    // rand() is *called* is as much a part of the contract as what is done
+    // with it.
+    const top = isDeck && overcast > 0
+      ? THREE.MathUtils.lerp(rawTop, baseAlt + 1.6 + rand() * 0.9, overcast)
+      : rawTop;
 
     // Count jitter, so two clusters of the same tier are not built from the
     // same number of parts. Small, but it is the difference between "the same
     // cloud reseeded" and "a different cloud".
     const levels = Math.max(1, Math.round(tier.levels * (0.8 + rand() * 0.45)));
-    const puffsPerLevel = Math.max(3, Math.round(tier.puffsPerLevel * (0.82 + rand() * 0.4)));
+    // More lobes per level under overcast, because the mass is much wider now
+    // and the same count spread over it would thin out into a lace. Density is
+    // also how the underside gets dark: a thicker, better-packed deck shadows
+    // itself, which is the Beer-Lambert route to a grey sky rather than
+    // painting one (image-sky-plan.md §3).
+    const puffsPerLevel = Math.max(
+      3,
+      Math.round(tier.puffsPerLevel * (0.82 + rand() * 0.4) * (isDeck ? 1 + 0.9 * overcast : 1)),
+    );
 
     // The profile constants are the reference fit, but jittered per cluster.
     // Fixed constants meant every tower in the sky had its shoulder at exactly

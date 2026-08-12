@@ -225,6 +225,22 @@ export function cloudLightForElevation(base: THREE.Vector3, elevationDeg: number
   ).normalize();
 }
 
+/**
+ * Relight a colour that was chosen for midday.
+ *
+ * The same operation the cloud shader performs per fragment — keep how bright
+ * the thing is, take the hour's colour — but on the CPU, for the handful of
+ * fixed constants that live outside the cloud material. `lit` picks where
+ * between the shadow and the lit illuminant the surface sits.
+ *
+ * At noon `blend` is 0 and this returns the colour unchanged.
+ */
+export function relightForDay(base: THREE.Color, day: Daylight, lit: number): THREE.Color {
+  const illum = day.skyTint.clone().lerp(day.sunTint, lit);
+  const lum = luminance(base);
+  return base.clone().lerp(new THREE.Color(lum * illum.r, lum * illum.g, lum * illum.b), day.blend);
+}
+
 export function formatClock(hour: number): string {
   const h = Math.floor(hour);
   const m = Math.round((hour - h) * 60);

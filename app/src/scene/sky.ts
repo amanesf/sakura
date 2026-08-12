@@ -174,7 +174,19 @@ const FRAGMENT_SHADER = /* glsl */ `
     // 0.004 -> 0.010. With the primary integral turned down to match the
     // reference's zenith, this near-achromatic term is what refills the middle
     // elevations, where single scattering alone left the profile too dark.
-    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.010 * clamp(sunDir.y * 1.5 + 0.4, 0.05, 1.0);
+    // The elevation falloff was 1.5*sunDir.y + 0.4, which still handed the sky
+    // 46% of its midday multiple scattering with the sun two degrees above the
+    // horizon — and since this term is what refills the middle elevations, the
+    // whole sky stayed near midday brightness at dusk. Measured on the 18:36
+    // frame, the sky's luminance ran 107 at 33 degrees elevation and 173 at 1
+    // degree, against 115 and 181 at noon: the sun had all but set and the sky
+    // had given up eight levels.
+    //
+    // Steepened so it actually goes out with the sun. Both curves saturate at
+    // 1.0 above ~25 degrees of solar elevation, so the fitted midday sky (sun
+    // at 55) is untouched — this only changes hours that had never been
+    // measured against anything.
+    vec3 multiScatterFudge = lostEnergy * SUN_INTENSITY * 0.010 * clamp(sunDir.y * 2.35 + 0.02, 0.015, 1.0);
 
     return singleScatter + multiScatterFudge;
   }
