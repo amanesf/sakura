@@ -59,11 +59,41 @@ export function sunElevationAtHour(hour: number): number {
   return CLOCK_KEYFRAMES[CLOCK_KEYFRAMES.length - 1].elevationDeg;
 }
 
-/** Unit vector toward the sun for a given elevation. Azimuth is fixed: the
- * camera never yaws, so the sun only rises and sets in this scene. */
-export function sunDirectionAtElevation(elevationDeg: number): THREE.Vector3 {
+/**
+ * Where the sun is in bearing, as the afternoon goes on.
+ *
+ * It used to be fixed at 55 degrees, and that one number was quietly costing
+ * the entire sunset. The frame is 81 degrees wide, so only +-40.5 degrees off
+ * the view axis is ever on screen: at 55 the sun is off the right edge at every
+ * hour, sky.ts's sun disc has never once been visible, and everything a sunset
+ * is actually made of — the disc, the glare around it, cloud edges lit from
+ * behind — was structurally unavailable. What was left was colour, which is why
+ * it came out as "the midday picture, tinted".
+ *
+ * So the bearing swings toward the window as the sun drops, reaching 22 degrees
+ * by seven o'clock — inside the frame, low and to the right. It stays exactly at
+ * 55 at noon, which is the reference image's own measured key light, so nothing
+ * fitted moves.
+ *
+ * Physically a real sun's azimuth does swing through the afternoon; it just
+ * swings the other way in this hemisphere. This is the one place in the file
+ * where the composition wins over the almanac, and it wins because the whole
+ * scene is a fixed shot out of one window: the sun has to come to the window,
+ * because the window cannot turn to the sun.
+ */
+export function sunAzimuthAtHour(hour: number): number {
+  const t = THREE.MathUtils.smoothstep(
+    THREE.MathUtils.clamp(hour, CLOCK_START_HOUR, CLOCK_END_HOUR),
+    14,
+    CLOCK_END_HOUR,
+  );
+  return THREE.MathUtils.lerp(SUN_AZIMUTH_DEG, 22, t);
+}
+
+/** Unit vector toward the sun. */
+export function sunDirectionAtElevation(elevationDeg: number, azimuthDeg = SUN_AZIMUTH_DEG): THREE.Vector3 {
   const elevation = THREE.MathUtils.degToRad(elevationDeg);
-  const azimuth = THREE.MathUtils.degToRad(SUN_AZIMUTH_DEG);
+  const azimuth = THREE.MathUtils.degToRad(azimuthDeg);
   const cosEl = Math.cos(elevation);
   return new THREE.Vector3(
     Math.sin(azimuth) * cosEl,
@@ -104,6 +134,9 @@ export interface Daylight {
    * those illuminants. 0 at noon. See cloudShader.ts for why this is a blend
    * toward a relit colour rather than a multiply. */
   blend: number;
+  /** 0 in full day, 1 once the sun is on the horizon. The single "how late is
+   * it" number the rest of the scene keys off. */
+  dusk: number;
   /** Multiplier for the painted plate, which is a midday painting. */
   plateTint: THREE.Color;
 }
@@ -133,7 +166,7 @@ function desaturate(c: THREE.Color, keep: number): void {
 
 export function daylightAtHour(hour: number): Daylight {
   const elevationDeg = sunElevationAtHour(hour);
-  const sunDir = sunDirectionAtElevation(elevationDeg);
+  const sunDir = sunDirectionAtElevation(elevationDeg, sunAzimuthAtHour(hour));
 
   // Hue of the direct beam: extra Rayleigh extinction relative to noon. Divided
   // through by its own brightest channel so this carries *colour only* — the
@@ -189,40 +222,45 @@ export function daylightAtHour(hour: number): Daylight {
     .lerp(new THREE.Color(1.0, 0.82, 0.72), dusk * 0.75)
     .multiplyScalar(THREE.MathUtils.lerp(1, 0.42, dusk));
 
-  return { elevationDeg, sunDir, sunTint, skyTint, blend, plateTint };
+  return { elevationDeg, sunDir, sunTint, skyTint, blend, dusk, plateTint };
 }
 
 /**
- * The cloud key light for a given sun elevation.
+ * The cloud key light for an hour.
  *
- * The base vector is art-directed rather than astronomical (see main.ts) and it
- * is fitted, so it may not simply be replaced by the sun direction. What
- * changes with the hour is its *height*: the horizontal bearing is held exactly
- * so the lateral modelling the fit produced is preserved, and only the
- * elevation is driven down as the sun sets, which is what turns overhead light
- * into raking light across the cloud tops.
+ * Two things happen to it, in this order.
  *
- * Swinging the bearing toward the true sun instead was the obvious alternative
- * and is wrong here: the art-directed light comes from the left and the scene's
- * sun sits to the right, so interpolating between them drags the key light
- * across the camera axis — through exactly the flat-light configuration that
- * main.ts documents having already fixed once.
+ * First the elevation is driven down in proportion to the sun's, keeping the
+ * fitted bearing: that alone turns overhead light into raking light across the
+ * cloud tops, and it is exactly the art-directed vector at noon.
+ *
+ * Then, as dusk comes on, it is swung toward the sun itself. This was
+ * deliberately *not* done while the sun was off-frame — a key light that
+ * disagrees with an invisible sun costs nothing, and the fitted bearing was
+ * worth more. Now that the sun comes into frame in the evening
+ * (sunAzimuthAtHour), a cloud lit from the left with the sun visible on the
+ * right is simply wrong, and the disagreement is the first thing the eye finds.
+ *
+ * The interpolation is safe here even though main.ts documents a flat-light
+ * disaster from pointing the key light down the camera axis: both vectors point
+ * *away* from the camera (the fitted one has z = -0.44, the evening sun about
+ * -0.93), so the path between them stays beyond the cloud. It passes through
+ * "directly behind", which is backlight — the thing an evening sky is for.
  */
-export function cloudLightForElevation(base: THREE.Vector3, elevationDeg: number): THREE.Vector3 {
+export function cloudLightForDay(base: THREE.Vector3, day: Daylight): THREE.Vector3 {
   const horizontal = Math.hypot(base.x, base.z);
   if (horizontal < 1e-6) return base.clone();
   const baseElevation = Math.atan2(base.y, horizontal);
   const noonElevation = THREE.MathUtils.degToRad(sunElevationAtHour(CLOCK_START_HOUR));
-  const sunElevation = THREE.MathUtils.degToRad(elevationDeg);
-  // Proportional, so the key light is exactly `base` at noon and flattens onto
-  // the horizon as the sun does.
+  const sunElevation = THREE.MathUtils.degToRad(day.elevationDeg);
   const elevation = baseElevation * (sunElevation / noonElevation);
   const cos = Math.cos(elevation);
-  return new THREE.Vector3(
+  const flattened = new THREE.Vector3(
     (base.x / horizontal) * cos,
     Math.sin(elevation),
     (base.z / horizontal) * cos,
   ).normalize();
+  return flattened.lerp(day.sunDir, day.dusk).normalize();
 }
 
 /**

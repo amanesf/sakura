@@ -96,32 +96,67 @@ export const RainShader = {
       return v;
     }
 
-    // One sheet of falling streaks.
-    //
-    // The frame is cut into tall thin cells; each cell holds at most one drop,
-    // its column offset and fall phase hashed from the cell so the pattern
-    // never tiles visibly. density is the fraction of cells that hold a drop
-    // at all — sparseness is what stops this reading as hatching.
+    /**
+     * One sheet of falling streaks.
+     *
+     * The frame is cut into tall thin cells; each cell holds at most one drop,
+     * its column offset and fall phase hashed from the cell so the pattern
+     * never tiles visibly. density is the fraction of cells that hold a drop at
+     * all — sparseness is what stops this reading as hatching.
+     *
+     * Everything about an individual streak is varied per drop, and that is the
+     * fix for the first version, which read as scratches on the lens rather
+     * than as rain. Scratches are what you get from marks that are all the same
+     * width, all the same brightness, all the same length, all at the same
+     * angle, with a hard edge: that is a description of damage, because damage
+     * is made by one process acting once. Rain is thousands of independent
+     * objects at different distances, so no two of its streaks agree about
+     * anything.
+     *
+     * The edge is soft over about twice the streak's width as well. A raindrop
+     * crossing the frame during one exposure is motion blur — it has no sharp
+     * boundary anywhere.
+     */
     float sheet(vec2 uv, float columns, float speed, float streakLen, float density,
                 float width, float seed) {
       vec2 cell = vec2(columns, columns / (streakLen * uAspect));
       vec2 grid = uv * cell;
       // Slant. Rain in any wind is not vertical, and matching the scene's
-      // left-to-right flow ties it to the clouds above it.
-      grid.x += grid.y * 0.12;
+      // left-to-right flow ties it to the clouds above it. Per-column, so the
+      // sheet is not one rigidly parallel comb.
+      float column0 = floor(uv.x * columns);
+      grid.x += grid.y * (0.08 + hash12(vec2(column0, seed + 3.0)) * 0.09);
       float column = floor(grid.x);
       float jitter = hash12(vec2(column, seed));
       grid.y += uTime * speed * (0.75 + jitter * 0.5);
       float row = floor(grid.y);
       float id = hash12(vec2(column, row + seed * 37.0));
       if (id > density) return 0.0;
+
+      // Per-drop character.
+      float r1 = fract(id * 17.0);
+      float r2 = fract(id * 91.7);
+      float r3 = fract(id * 233.1);
+      float w = width * (0.55 + r2 * 1.1);
+      float len = 0.35 + r3 * 0.45; // fraction of the cell this drop occupies
+
       vec2 f = fract(grid);
-      // Across the streak: a soft line, offset within its column.
-      float x = abs(f.x - (0.25 + 0.5 * fract(id * 17.0)));
-      float across = smoothstep(width, 0.0, x);
-      // Along it: bright at the head, tapering to nothing at the tail.
-      float along = smoothstep(0.0, 0.35, f.y) * smoothstep(1.0, 0.45, f.y);
-      return across * along;
+      float x = abs(f.x - (0.2 + 0.6 * r1));
+      // Soft across its whole width — no hard edge anywhere on a streak.
+      float across = exp(-(x * x) / (w * w + 1e-6));
+      // Along it: brightest at the head, fading out along the tail.
+      float along = smoothstep(0.0, len * 0.35, f.y) * smoothstep(len, len * 0.4, f.y);
+      // And drops are not all equally visible: some catch the light, most
+      // barely register.
+      return across * along * (0.35 + r2 * r2 * 1.3);
+    }
+
+    // What the rain does to any colour in the scene: pulls it toward a flat
+    // rain-grey and takes some of its contrast out with it.
+    vec3 weather(vec3 c, float wash, float heavy) {
+      vec3 washed = mix(c, uRainColor * mix(1.0, 0.72, heavy), wash);
+      float grey = dot(washed, vec3(0.299, 0.587, 0.114));
+      return mix(washed, vec3(grey), wash * 0.4);
     }
 
     void main() {
@@ -137,11 +172,7 @@ export const RainShader = {
       // thick enough to be its own night, and the rain between you and anything
       // else scatters what little is left.
       float wash = rain * (0.42 + 0.40 * heavy);
-      vec3 color = mix(src.rgb, uRainColor * mix(1.0, 0.72, heavy), wash);
-      // And a little contrast out with it — rain flattens a scene as well as
-      // dimming it.
-      float grey = dot(color, vec3(0.299, 0.587, 0.114));
-      color = mix(color, vec3(grey), wash * 0.4);
+      vec3 color = weather(src.rgb, wash, heavy);
 
       // The curtains go in first, behind the streaks: they are the far rain,
       // and the streaks are the near rain in front of them. Strongest low in
@@ -163,17 +194,37 @@ export const RainShader = {
       // for the near ones. streakLen sets how many rows the frame is cut into,
       // so it is the number that makes them long; the width argument is a
       // fraction of a column, so it is the one that makes them thin.
-      float mist = sheet(vUv, 88.0, 0.25, 2.8, mix(0.22, 0.46, heavy), 0.055, 1.0);
-      float mid = sheet(vUv, 35.0, 0.40, 2.7, mix(0.14, 0.34, heavy), mix(0.030, 0.042, heavy), 7.0);
-      float near = sheet(vUv, 16.0, 0.55, 2.6, mix(0.0, 0.30, heavy), mix(0.022, 0.034, heavy), 23.0);
+      float mist = sheet(vUv, 88.0, 0.25, 2.8, mix(0.38, 0.70, heavy), 0.055, 1.0);
+      float mid = sheet(vUv, 35.0, 0.40, 2.7, mix(0.26, 0.55, heavy), mix(0.030, 0.042, heavy), 7.0);
+      float near = sheet(vUv, 16.0, 0.55, 2.6, mix(0.0, 0.45, heavy), mix(0.022, 0.034, heavy), 23.0);
 
       float streaks = mist * 0.28 + mid * mix(0.45, 0.75, heavy) + near * heavy;
       streaks *= smoothstep(0.03, 0.35, rain);
 
-      // Added as light, not painted as grey lines: a raindrop in front of the
-      // sky is a lens, and what it does is scatter a little of the sky's own
-      // brightness toward the eye.
-      color += streaks * mix(0.18, 0.50, heavy) * mix(vec3(1.0), uRainColor + 0.4, 0.5);
+      // A raindrop is a lens, not a mark.
+      //
+      // The first version added white light, and that is most of why the
+      // streaks read as scratches: a scratch is bright because its material is
+      // damaged, so it has its own colour and ignores the scene. A drop has no
+      // colour of its own at all — it is a tiny lens that gathers the sky from
+      // above and behind it and squeezes it toward the eye, so a streak is
+      // always a compressed, slightly brightened image of what is *around* it.
+      // That is why rain nearly vanishes against a bright sky and stands out
+      // against a dark hillside, and why it can never look pasted on.
+      //
+      // Sampling upward is the cheap version of that: the sky above any point
+      // in this frame is the brightest thing a drop at that point could be
+      // gathering.
+      // Weathered exactly like everything else before it is used. Reading
+      // tDiffuse gives the sky as it was *before* the downpour darkened it, and
+      // using that raw was the second thing wrong with these streaks: every
+      // drop showed a bright clear-weather sky against a scene that had just
+      // been taken down two stops, so they came out as luminous blue-white
+      // shards. A drop can only gather the light that is actually there.
+      vec3 gathered = weather(
+        texture2D(tDiffuse, vec2(vUv.x, min(vUv.y + 0.05, 1.0))).rgb, wash, heavy);
+      vec3 streakColor = gathered * 1.18 + 0.02;
+      color = mix(color, streakColor, clamp(streaks * mix(0.55, 1.0, heavy), 0.0, 1.0));
 
       gl_FragColor = vec4(color, src.a);
     }

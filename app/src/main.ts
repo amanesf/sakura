@@ -10,7 +10,7 @@ import { createControls } from './ui/controls';
 import {
   CLOCK_END_HOUR,
   CLOCK_START_HOUR,
-  cloudLightForElevation,
+  cloudLightForDay,
   daylightAtHour,
 } from './core/daylight';
 import { createPostFx } from './core/postFx';
@@ -187,7 +187,7 @@ function applyControls(simTime: number): void {
     sunDir.copy(daylight.sunDir);
     // The cloud key light keeps its fitted bearing and only loses elevation —
     // see core/daylight.ts for why it is not simply swung onto the sun.
-    cloudLight.copy(cloudLightForElevation(CLOUD_LIGHT_DIR, daylight.elevationDeg));
+    cloudLight.copy(cloudLightForDay(CLOUD_LIGHT_DIR, daylight));
     materials.core.uniforms.uLightDir.value.copy(cloudLight);
     materials.core.uniforms.uSunTint.value.set(
       daylight.sunTint.r, daylight.sunTint.g, daylight.sunTint.b,
