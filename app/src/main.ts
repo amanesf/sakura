@@ -205,9 +205,33 @@ for (const c of SMALL_CUMULUS) {
 // lets the shader's aerial-perspective term do the work, and also keeps
 // them above the horizon line by geometry alone (at 45km out, a 1.6km base
 // still sits about 2 degrees up).
+// Tiers are specified by the elevation band each one is supposed to occupy,
+// not by "near/far" feel. Counting cloud pixels per elevation band on the
+// reference (scripts/skyprofile.js, 13 bands over the window interior) gives
+// the target: coverage peaks at 75-79% across 6-9°, is still 65-67% at
+// 12-15°, and falls back to 42% at the horizon band (0.8°). The previous two
+// tiers put every bank between 1.5° and 7.4° of elevation — tier0's top was
+// atan(4.4/34)=7.4°, tier1's atan(8.0/65)=7.0° — so they piled up in the
+// 0-4° bands (measured 86%/63% against the reference's 70%/42%) and left a
+// hole at 6-9° (43% against 75%).
+//
+// Geometry fixes the altitudes: a deck whose top is to read at elevation e
+// from distance d needs altitude d·tan(e). Reaching the reference's 14.6°
+// from 34km would need 8.9km, which is not a low cumulus bank any more; from
+// 22km it needs only 5.7km, an ordinary mid-level (高積雲) deck. So the near
+// tier is pulled in to 17-27km and lifted, rather than the old tier being
+// stretched upward at its original distance.
+//
+// Resulting elevation span of each tier (base → top, at its mid distance):
+//   0  near deck   22km   2.3km → 6.2km   =  6.0° → 15.7°
+//   1  middle      38km   2.2km → 8.2km   =  3.3° → 12.2°
+//   2  far bank    70km   1.6km → 5.4km   =  1.3° →  4.4°
+// The far tier keeps the horizon band populated but is the only tier that
+// reaches it, which is what brings 0-4° back down toward the reference.
 const BANK_TIERS = [
-  { count: 16, zNear: 26, zSpan: 16, baseAlt: 1.5, topLo: 2.4, topHi: 4.4, radLo: 2.6, radHi: 5.0, xStep: 4.4, wind: 0.5 },
-  { count: 20, zNear: 48, zSpan: 34, baseAlt: 1.8, topLo: 4.0, topHi: 8.0, radLo: 4.0, radHi: 9.0, xStep: 6.2, wind: 0.3 },
+  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 4.6, topHi: 6.2, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
+  { count: 16, zNear: 30, zSpan: 11, baseAlt: 2.2, topLo: 5.0, topHi: 8.2, radLo: 4.0, radHi: 7.5, xStep: 6.0, wind: 0.4 },
+  { count: 14, zNear: 55, zSpan: 21, baseAlt: 1.6, topLo: 3.2, topHi: 5.4, radLo: 5.0, radHi: 9.0, xStep: 8.0, wind: 0.25 },
 ];
 BANK_TIERS.forEach((tier, t) => {
   for (let i = 0; i < tier.count; i++) {
