@@ -199,12 +199,18 @@ body {
 
 /* --- Console ----------------------------------------------------------- */
 
+/* Six rows now (cloud, rain, time, speed, fps, scene), so the console is the
+   one part of this page that grows every time something is added to it — and it
+   sits between the picture and the text, which are the two things worth looking
+   at. The spacing below is therefore tighter than a form would normally be:
+   most of what separates two rows is not the gap but the empty height of the
+   row itself, since a slider's track is 2px inside a box sized for a thumb. */
 .console {
   flex: none;
-  padding: 20px max(18px, env(safe-area-inset-left)) 0 max(18px, env(safe-area-inset-right));
+  padding: 12px max(18px, env(safe-area-inset-left)) 0 max(18px, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 5px;
 }
 
 /* A thin lit line rather than a chunky slider — the same visual family as the
@@ -246,7 +252,15 @@ body {
 
 .slider__input {
   flex: 1;
-  height: 34px; /* touch target, not the visual height of the track */
+  /* Touch target, not the visual height of the track — which is 2px. Trimmed
+     from 34, which put 16px of nothing above and below every track; a slider
+     can be grabbed anywhere along its length, so it needs less height than a
+     button does to stay comfortable. */
+  height: 28px;
+  /* Chrome's UA stylesheet puts `margin: 2px` on a range input, which quietly
+     made every slider row 32px rather than the 28 asked for — four rows, so
+     16px of the console's height was a default nobody chose. */
+  margin: 0;
   background: transparent;
   appearance: none;
   -webkit-appearance: none;
@@ -321,9 +335,9 @@ body {
   font-variant-numeric: tabular-nums;
   color: var(--text-dim);
   cursor: pointer;
-  /* The row is 34px tall for the sliders' sake (touch target); match it so the
-     console's spacing does not change when this row is added. */
-  height: 34px;
+  /* Kept taller than the slider rows. A button has to be hit, not swept, so it
+     is the one control here that cannot give up much height. */
+  height: 30px;
   transition: color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
