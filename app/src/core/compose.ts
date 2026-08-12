@@ -25,11 +25,8 @@ export interface Compose {
   setPicture: (texture: THREE.Texture) => void;
   /** The clouds on their own, in the picture's frame (scene/cloudLayer.ts). */
   setClouds: (texture: THREE.Texture) => void;
-  /**
-   * Where the picture goes, in canvas UV (origin bottom-left, y up), and how
-   * far the silhouette reaches below it as a fraction of the picture's height.
-   */
-  setLayout: (rect: THREE.Vector4, silhouetteReach: number) => void;
+  /** Where the picture goes, in canvas UV (origin bottom-left, y up). */
+  setLayout: (rect: THREE.Vector4) => void;
   /** Measurement mode hands the whole canvas to the picture and draws nothing
    * else — see style.css's .fit-frame. */
   setOverlayEnabled: (enabled: boolean) => void;
@@ -50,7 +47,6 @@ export function createCompose(): Compose {
       uClouds: { value: null as THREE.Texture | null },
       /** xy = origin, zw = size, in canvas UV. */
       uPictureRect: { value: new THREE.Vector4(0, 0, 1, 1) },
-      uReach: { value: 1.35 },
       uOverlay: { value: 1 },
       uAspect: { value: 0.45 },
     },
@@ -65,7 +61,6 @@ export function createCompose(): Compose {
       uniform sampler2D uPicture;
       uniform sampler2D uClouds;
       uniform vec4 uPictureRect;
-      uniform float uReach;
       uniform float uOverlay;
       uniform float uAspect;
       varying vec2 vUv;
@@ -125,7 +120,21 @@ export function createCompose(): Compose {
           // sits under the cloud it belongs to — which is what makes it read as
           // one composition rather than as decoration that happens to be
           // cloud-shaped.
-          vec2 s = vec2(p.x, (p.y + uReach) / uReach);
+          //
+          // **Same y scale too, which it was not.** This used to be
+          // (p.y + uReach) / uReach, i.e. the layer's whole height spread over
+          // however much page happened to be left under the picture. The layer
+          // is rendered with the *view* camera (scene/cloudLayer.ts), so it
+          // frames the same 1.83:1 view the picture does and one picture-width
+          // of it is exactly one picture-height tall — which makes the old
+          // mapping's vertical stretch exactly uReach, about 2.2x on a phone.
+          // The clouds under the console came out drawn upward like flames.
+          //
+          // p.y + 1.0 puts the layer's bottom edge one picture-height below the
+          // picture's, at its own proportions. It covers very nearly the same
+          // area as before, because the fade below already threw away the
+          // bottom half of the stretched version.
+          vec2 s = vec2(p.x, p.y + 1.0);
           if (s.x >= 0.0 && s.x <= 1.0 && s.y >= 0.0 && s.y <= 1.0) {
             // Fades in under the picture's edge and out toward the foot of the
             // page, so it has no boundary of its own anywhere.
@@ -171,9 +180,8 @@ export function createCompose(): Compose {
   return {
     setPicture: (t) => { material.uniforms.uPicture.value = t; },
     setClouds: (t) => { material.uniforms.uClouds.value = t; },
-    setLayout: (rect, reach) => {
+    setLayout: (rect) => {
       material.uniforms.uPictureRect.value.copy(rect);
-      material.uniforms.uReach.value = Math.max(reach, 0.01);
     },
     setOverlayEnabled: (enabled) => { material.uniforms.uOverlay.value = enabled ? 1 : 0; },
     setAspect: (aspect) => { material.uniforms.uAspect.value = aspect; },

@@ -101,10 +101,6 @@ watchResize(renderer, (cssWidth, cssHeight) => {
       band.width / cssWidth,
       band.height / cssHeight,
     ),
-    // How far the silhouette reaches below the picture, as a multiple of the
-    // picture's own height — enough to carry it past the console and fade out
-    // near the foot of the page.
-    Math.max((cssHeight - (band.top + band.height)) / Math.max(band.height, 1), 0.2),
   );
   compose.setOverlayEnabled(!fitFrame);
   compose.setAspect(cssWidth / Math.max(cssHeight, 1));
