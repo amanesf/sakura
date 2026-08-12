@@ -7,6 +7,7 @@ import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials } from './scene/clouds';
 import { createCloudField, NO_SHADOW_CAST_LAYER } from './scene/cloudField';
 import { createControls } from './ui/controls';
+import { DEFAULT_PRESET, isPresetName } from './scene/skyPresets';
 import { sunDirection } from './core/solarPosition';
 import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
@@ -122,7 +123,14 @@ const cloudShadow = createCloudShadow(CLOUD_LIGHT_DIR, CLOUD_FIELD_CENTER, 78, 2
 materials.core.uniforms.uShadowMap.value = cloudShadow.texture;
 materials.core.uniforms.uShadowMatrix.value = cloudShadow.matrix;
 
-const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR);
+// Which sky. The URL wins over the default so scripts/capture.js can measure a
+// named preset (`?preset=clear`) rather than whatever the console was last left
+// on — the same reason `?t=` exists.
+const query = new URLSearchParams(window.location.search);
+const presetParam = query.get('preset');
+const initialPreset = isPresetName(presetParam) ? presetParam : DEFAULT_PRESET;
+
+const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR, initialPreset);
 
 // The high tiers (cirrus, altocumulus) live on their own layer so the shadow
 // camera — which stays on layer 0 — never sees them. The view camera has to be
@@ -138,7 +146,8 @@ const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
 // minutes on a 7 m/s wind — so the app is watchable at 1x but only really shows
 // its weather when run up. The slider goes to 30x, where a crossing takes 2.3
 // minutes and a cumulonimbus lives about two.
-const controls = createControls();
+const controls = createControls(initialPreset);
+controls.onPreset((name) => cloudField.setPreset(name));
 
 // Simulated seconds. Every cluster's position, age and weather is a pure
 // function of this one number (scene/cloudField.ts), which is what lets

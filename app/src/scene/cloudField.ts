@@ -9,6 +9,12 @@ import {
 } from './clouds';
 import { CAMERA_VERTICAL_FOV_DEG } from '../core/camera';
 import { FRAME_WIDTH, FRAME_HEIGHT } from '../core/frame';
+import {
+  SKY_PRESETS,
+  coverageScaleFor,
+  weatherFor,
+  type SkyPresetName,
+} from './skyPresets';
 
 /**
  * A sky that keeps happening, rather than a fixed arrangement of clouds that
@@ -62,7 +68,7 @@ interface TierSpec {
   /** Cluster radius, roughly, in km — how far past the frame edge a cluster has
    * to travel before it is fully gone. */
   margin: number;
-  /** Coverage this tier contributes at a given weather value (see weatherAt).
+  /** Coverage this tier contributes at a given weather value.
    * A clear day has scattered fair-weather cumulus and no towers at all; a
    * pre-rain sky is solid low deck. */
   coverageAt: (weather: number) => number;
@@ -83,7 +89,7 @@ interface TierSpec {
    * Weather arrives from the top down. The classic warm-front sequence is
    * cirrus first, then middle cloud thickening, then the low deck and rain —
    * high cloud is the part of an approaching system you can see while the air
-   * around you is still fine. Sampling weatherAt() at birthTime + lead is the
+   * around you is still fine. Sampling the weather at birthTime + lead is the
    * whole mechanism: the cirrus deck fills in during what still looks like a
    * clear afternoon, and by the time the low deck closes over, the cirrus has
    * already been solid for a while. Without it every layer thickened and
@@ -310,7 +316,7 @@ const TIERS: TierSpec[] = [
     // Near the jet. This is the tier the eye catches moving against the rest.
     windScale: 4.2,
     castsShadow: false,
-    // Furthest ahead — the first sign of a change. weatherAt()'s shortest term
+    // Furthest ahead — the first sign of a change. The oscillator's shortest term
     // has a period of 930s, so a lead of 3600s is a substantial fraction of a
     // full swing rather than a token offset.
     weatherLead: 3600,
@@ -340,14 +346,18 @@ const TIERS: TierSpec[] = [
 ];
 
 /**
- * The weather, as a single number: 0 is a clear day, 0.5 the reference image's
- * summer sky, 1 an about-to-rain sky. Three sine terms with periods that share
- * no common multiple (≈3.2h, ≈7.5h, ≈1.6h), so the sequence never repeats and
- * yet is a pure function of the clock — no accumulated state to desynchronise a
- * capture. At 30x those periods are 6.4, 15 and 3.2 minutes, which is roughly
- * how fast a real afternoon changes its mind.
+ * How the sky changes its mind, as a number in [0,1]. Three sine terms with
+ * periods that share no common multiple (≈3.2h, ≈7.5h, ≈1.6h), so the sequence
+ * never repeats and yet is a pure function of the clock — no accumulated state
+ * to desynchronise a capture. At 30x those periods are 6.4, 15 and 3.2 minutes,
+ * which is roughly how fast a real afternoon changes its mind.
+ *
+ * This is the raw oscillator. What it means as *weather* depends on the preset
+ * the console has selected, which maps it into a window (scene/skyPresets.ts):
+ * the same wobble becomes "a summer afternoon building towers" or "a fair day
+ * with high cloud" depending on where that window sits.
  */
-export function weatherAt(simTime: number): number {
+export function weatherOscillation(simTime: number): number {
   const h =
     0.55 * Math.sin(simTime / 1830) +
     0.30 * Math.sin(simTime / 4270 + 1.7) +
@@ -419,6 +429,11 @@ interface Slot {
 }
 
 export interface CloudField {
+  /** Switch to a different sky. Every cluster is rebuilt on the next update so
+   * the change is immediate: a slot normally only re-rolls its coverage when it
+   * finishes a crossing, which at 1x is up to 102 minutes away, and a button
+   * that takes an hour to take effect is not a button. */
+  setPreset: (name: SkyPresetName) => void;
   update: (simTime: number) => void;
   /** Live counts, for the perf overlay. */
   stats: () => { clusters: number; rebuilds: number };
@@ -428,7 +443,13 @@ export function createCloudField(
   scene: THREE.Scene,
   materials: CloudMaterials,
   lightDir: THREE.Vector3,
+  initialPreset: SkyPresetName,
 ): CloudField {
+  let preset = SKY_PRESETS[initialPreset];
+
+  /** The weather a tier sees: the oscillator mapped into the current preset's
+   * window. */
+  const weatherAt = (simTime: number) => weatherFor(preset, weatherOscillation(simTime));
   const slots: Slot[] = [];
   let id = 0;
   for (const tier of TIERS) {
@@ -473,7 +494,7 @@ export function createCloudField(
     // luck. Spreading the draws over the unit interval makes the count of active
     // slots track the coverage exactly instead of on average.
     const stratum = (slot.index + hash01(slot.id * 3.1, generation)) / tier.count;
-    slot.active = stratum < tier.coverageAt(coverageWeather);
+    slot.active = stratum < tier.coverageAt(coverageWeather) * coverageScaleFor(preset, tier.name);
     slot.z = -(tier.zNear + rand() * tier.zSpan);
     slot.generation = generation;
     if (!slot.active) return;
@@ -588,8 +609,18 @@ export function createCloudField(
     }
   }
 
+  function setPreset(name: SkyPresetName): void {
+    if (SKY_PRESETS[name] === preset) return;
+    preset = SKY_PRESETS[name];
+    // NaN never equals the generation computed in update(), so every slot
+    // rebuilds on the next frame — which is also what releases the old
+    // clusters' GPU buffers, since buildSlot disposes before it rebuilds.
+    for (const slot of slots) slot.generation = Number.NaN;
+  }
+
   return {
     update,
+    setPreset,
     stats: () => ({ clusters: slots.filter((s) => s.active).length, rebuilds }),
   };
 }

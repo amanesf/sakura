@@ -18,30 +18,34 @@
      window (or a very tall phone) doesn't hand the whole page to the sky and
      leave the console squashed at the bottom. */
   --stage-max-height: 46vh;
-}
 
-/* Measurement mode (`?fit=frame`, set by main.ts; see scripts/README.md).
- *
- * Every statistic in this project is computed by comparing a capture against
- * the reference image at its own 1408x768, so the harness needs a way to ask
- * for exactly that frame and nothing else. In the normal portrait layout the
- * canvas is a band whose aspect comes from the viewport width and the height
- * cap, which is the right thing for the app and useless for measurement — at a
- * 1408x768 capture viewport it produces a 1619x353 strip, i.e. a heavy crop of
- * the frame, so none of the fitted crops in scripts/README.md would land.
- *
- * This hands the whole viewport to the picture and hides the chrome, so the
- * default capture keeps meaning what every comment in the codebase says it
- * means. `?fit=page` (capture.js's other mode) captures the real layout. */
-.fit-frame .title,
-.fit-frame .console {
-  display: none;
-}
+  /* The page's palette. Deep ink at the foot of the page rising to a lit blue
+     behind the picture — the same direction the sky itself runs, so the page
+     reads as one continuous graded field rather than a photo pasted on black.
+     Sampled off the plate's own sky so the spill looks like light coming from
+     the picture rather than a coloured panel behind it. */
+  --ink: #04060b;
+  --ink-mid: #071426;
+  --lit: #10314e;
+  --spill: rgba(96, 178, 232, 0.42);
 
-.fit-frame .stage {
-  width: 100vw;
-  margin-left: 0;
-  height: 100vh;
+  /* Where the picture's lower edge falls, as a fraction of the viewport. The
+     ambience is aimed at this line rather than at the middle of the screen:
+     the light has to look like it is coming *out of* the picture, so its
+     brightest point belongs just below the picture's foot, not behind it where
+     the picture would hide it. Kept in sync with the .stage height below by
+     the same expression. */
+  --stage-foot: calc(
+    clamp(0px, env(safe-area-inset-top), 60px) + 84px +
+      min(
+        calc((100vw + var(--bleed-left) + var(--bleed-right)) / var(--plate-aspect)),
+        var(--stage-max-height)
+      )
+  );
+
+  --text: #eaf2f8;
+  --text-dim: rgba(217, 233, 245, 0.5);
+  --accent: #7cc6f0;
 }
 
 html,
@@ -51,33 +55,102 @@ body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000;
+  background: var(--ink);
   overscroll-behavior: none;
   touch-action: none;
 }
 
-/* Portrait phone, top to bottom: title, picture, then everything else pushed
-   to the bottom for the console. The picture sits directly under the title
-   ("中央上部") rather than being vertically centred, because the bottom of the
-   screen is reserved for controls that do not all exist yet. */
+/* Portrait phone, top to bottom: title, picture, console. The console sits
+   directly under the picture rather than being pushed to the foot of the
+   screen — everything the eye needs is in the upper two thirds, and the space
+   below it is deliberate darkness the ambience grades into, not a gap. */
 body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
+/* --- The page's light ------------------------------------------------- */
+
+.ambience {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Three layers, all aimed at the picture's foot (--stage-foot).
+
+     The first version put the radial's centre at 26% of the viewport, which is
+     *behind* the picture — so the only part of the glow that ever showed was
+     its outer falloff, and the whole page below the picture read as flat
+     black. The light has to spill out of the picture and down the page, so its
+     source sits on the picture's lower edge and its falloff runs into the
+     empty space rather than under the artwork.
+
+     Bottom to top in paint order: the base grade, a wide soft pool, then a
+     tighter hot core right at the edge. */
+  background:
+    radial-gradient(90% 22% at 50% var(--stage-foot), var(--spill) 0%, transparent 70%),
+    radial-gradient(
+      150% 42% at 50% var(--stage-foot),
+      rgba(96, 178, 232, 0.2) 0%,
+      rgba(96, 178, 232, 0.06) 45%,
+      transparent 78%
+    ),
+    linear-gradient(
+      to bottom,
+      var(--lit) 0%,
+      var(--lit) calc(var(--stage-foot) - 40px),
+      var(--ink-mid) calc(var(--stage-foot) + 34vh),
+      var(--ink) 100%
+    );
+}
+
+/* Everything above the ambience. */
+.title,
+.stage,
+.console {
+  position: relative;
+  z-index: 1;
+}
+
+/* --- Title ------------------------------------------------------------- */
+
 .title {
   flex: none;
-  padding: calc(env(safe-area-inset-top) + 14px) 16px 10px;
+  padding: calc(env(safe-area-inset-top) + 22px) 16px 16px;
   text-align: center;
 }
 
-.title__text {
+.title__main {
   margin: 0;
-  font: 600 17px/1.3 system-ui, sans-serif;
-  letter-spacing: 0.14em;
-  color: rgba(255, 255, 255, 0.82);
+  /* Mincho for the Japanese line. A serif face is what makes a nostalgic
+     summer title read as a title rather than as UI chrome, and the stack falls
+     back through the faces actually present on iOS, Android and Windows before
+     reaching the generic serif. */
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, 'Noto Serif JP',
+    'Source Han Serif', serif;
+  font-size: clamp(17px, 4.6vw, 26px);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+  color: var(--text);
+  /* A faint glow rather than a drop shadow: the title should look lit by the
+     same source as the page, not stamped on top of it. */
+  text-shadow: 0 0 22px rgba(124, 198, 240, 0.35), 0 1px 2px rgba(0, 0, 0, 0.6);
 }
+
+.title__sub {
+  margin: 8px 0 0;
+  font: 400 9px/1 system-ui, sans-serif;
+  letter-spacing: 0.42em;
+  /* Tracking pushes the line right by one space's worth; pulling it back keeps
+     it optically centred under the Japanese. */
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* --- The picture ------------------------------------------------------- */
 
 .stage {
   flex: none;
@@ -90,6 +163,8 @@ body {
     calc((100vw + var(--bleed-left) + var(--bleed-right)) / var(--plate-aspect)),
     var(--stage-max-height)
   );
+  /* The picture is the only lit object on the page, so it casts. */
+  box-shadow: 0 18px 60px -18px rgba(9, 34, 56, 0.9);
 }
 
 #app {
@@ -103,71 +178,179 @@ body {
   height: 100%;
 }
 
-/* The console. Pushed to the bottom of the page by the auto margin — this is
-   the strip that will hold the full set of controls; today only the speed
-   slider lives in it. */
+/* Softens the hard horizontal cut at the foot of the picture into the page.
+   Only the bottom edge: the picture's own top is the room's dark ceiling and
+   already reads as an edge, while its bottom is a floor sliced mid-plank. */
+.stage::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 14%;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, rgba(4, 6, 11, 0.85));
+}
+
+/* --- Console ----------------------------------------------------------- */
+
 .console {
   flex: none;
-  margin-top: auto;
-  padding: 12px max(16px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom))
-    max(16px, env(safe-area-inset-right));
+  padding: 20px max(18px, env(safe-area-inset-left)) 0 max(18px, env(safe-area-inset-right));
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
-.controls {
+/* Segmented control for the sky presets. Pills rather than tabs: there is no
+   content "under" them, they are two states of one sky. */
+.modes {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.mode {
+  flex: 0 1 auto;
+  min-width: 96px;
+  padding: 9px 16px;
+  border: 1px solid rgba(124, 198, 240, 0.28);
+  border-radius: 999px;
+  background: rgba(124, 198, 240, 0.05);
+  color: var(--text-dim);
+  font: 500 13px/1 system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease,
+    box-shadow 0.25s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mode:hover {
+  color: var(--text);
+  border-color: rgba(124, 198, 240, 0.5);
+}
+
+.mode[aria-pressed='true'] {
+  color: #06131f;
+  border-color: transparent;
+  background: linear-gradient(180deg, #a9dcf7, #6fb9e4);
+  box-shadow: 0 0 18px rgba(124, 198, 240, 0.45);
+}
+
+/* Speed. A thin lit line rather than a chunky slider — the same visual family
+   as the title's glow, so the console reads as one instrument. */
+.speed {
   display: flex;
   align-items: center;
-  gap: 12px;
-  opacity: 0.45;
-  transition: opacity 0.5s ease;
+  gap: 14px;
 }
 
-.controls--awake {
-  opacity: 1;
+.speed__label {
+  flex: none;
+  font: 500 9px/1 system-ui, sans-serif;
+  letter-spacing: 0.3em;
+  color: var(--text-dim);
 }
 
-.controls input[type='range'] {
+.speed__value {
+  flex: none;
+  min-width: 3.4em;
+  text-align: right;
+  font: 600 15px/1 ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.speed__value i {
+  font-style: normal;
+  font-size: 0.7em;
+  margin-left: 0.15em;
+  color: var(--text-dim);
+}
+
+.speed__slider {
   flex: 1;
-  height: 36px; /* touch target, not the visual height of the track */
+  height: 34px; /* touch target, not the visual height of the track */
   background: transparent;
   appearance: none;
   -webkit-appearance: none;
+  /* Set from JS on every input so the filled part of the track tracks the
+     thumb — a range input cannot express this in CSS alone. */
+  --fill: 0%;
 }
 
-.controls input[type='range']::-webkit-slider-runnable-track {
-  height: 3px;
+.speed__slider::-webkit-slider-runnable-track {
+  height: 2px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.45);
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--fill),
+    rgba(255, 255, 255, 0.16) var(--fill),
+    rgba(255, 255, 255, 0.16) 100%
+  );
 }
 
-.controls input[type='range']::-webkit-slider-thumb {
+.speed__slider::-webkit-slider-thumb {
   appearance: none;
   -webkit-appearance: none;
-  width: 22px;
-  height: 22px;
-  margin-top: -10px;
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 5px rgba(124, 198, 240, 0.18), 0 0 14px rgba(124, 198, 240, 0.8);
 }
 
-.controls input[type='range']::-moz-range-track {
-  height: 3px;
+.speed__slider::-moz-range-track {
+  height: 2px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.16);
 }
 
-.controls input[type='range']::-moz-range-thumb {
-  width: 22px;
-  height: 22px;
+.speed__slider::-moz-range-progress {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.speed__slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
   border: 0;
   border-radius: 50%;
   background: #fff;
+  box-shadow: 0 0 0 5px rgba(124, 198, 240, 0.18), 0 0 14px rgba(124, 198, 240, 0.8);
 }
 
-.controls__label {
-  min-width: 3.2em;
-  font: 600 14px/1 system-ui, sans-serif;
-  color: #fff;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
-  text-align: right;
+/* --- Measurement mode -------------------------------------------------- */
+
+/* `?fit=frame`, set by main.ts; see scripts/README.md.
+ *
+ * Every statistic in this project is computed by comparing a capture against
+ * the reference image at its own 1408x768, so the harness needs a way to ask
+ * for exactly that frame and nothing else. In the normal portrait layout the
+ * canvas is a band whose aspect comes from the viewport width and the height
+ * cap, which is right for the app and useless for measurement — at a 1408x768
+ * capture viewport it produces a 1619x353 strip, i.e. a heavy crop.
+ *
+ * This hands the whole viewport to the picture and hides every piece of page
+ * chrome, including the ambience and the bottom edge fade, so a capture is the
+ * render and nothing else. `?fit=page` captures the real layout. */
+.fit-frame .title,
+.fit-frame .console,
+.fit-frame .ambience {
+  display: none;
+}
+
+.fit-frame .stage {
+  width: 100vw;
+  margin-left: 0;
+  height: 100vh;
+  box-shadow: none;
+}
+
+.fit-frame .stage::after {
+  display: none;
 }

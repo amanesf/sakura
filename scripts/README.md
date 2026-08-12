@@ -146,3 +146,25 @@ It reports two things, and only the second one has ever fired on this scene:
 The clear-sky reference is a coarse grid with holes diffused in, not a per-row
 median — the sky varies with azimuth as well as elevation, and a per-row
 reference flagged a whole corner of ordinary blue sky (3% of the frame).
+
+# scripts/pageshot.js
+
+A screenshot of the whole *page* — title, ambience gradient, console — rather
+than just the canvas.
+
+```sh
+node scripts/pageshot.js /tmp/page.png 5580            # portrait phone, 448x998
+CAPTURE_W=448 CAPTURE_H=998 node scripts/pageshot.js /tmp/p.png 5580 preset=clear
+```
+
+`capture.js` reads the canvas out with `toDataURL` and cannot see any of the
+page design; this takes a real screenshot instead. It is slower and it is not
+what any statistic should be computed from — use `capture.js` for numbers and
+this for looking.
+
+**If you write your own playwright check that reads the canvas, do the
+`toDataURL` inside the same requestAnimationFrame callback that waits for the
+frame.** `preserveDrawingBuffer` is false, so a read issued from a separate
+task gets a cleared buffer and returns the same blank image every time. A test
+written the other way reported "the sky preset button does nothing" for a
+button that was working perfectly.
