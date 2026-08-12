@@ -10,7 +10,16 @@
     <title>夏雲シミュレーター</title>
   </head>
   <body>
-    <div id="app"></div>
+    <!-- Portrait phone layout, top to bottom: title, the picture, then the
+         controls. The title text is a placeholder — the name is not decided
+         yet ("タイトル(未定)"), only its slot in the layout is. -->
+    <header class="title">
+      <h1 class="title__text">夏雲シミュレーター</h1>
+    </header>
+    <div class="stage">
+      <div id="app"></div>
+    </div>
+    <footer class="console"></footer>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -5,16 +5,26 @@ import { createCamera } from './core/camera';
 import { visibleRect, applyToCamera } from './core/frame';
 import { createSky, updateSky } from './scene/sky';
 import { createCloudMaterials } from './scene/clouds';
-import { createCloudField } from './scene/cloudField';
+import { createCloudField, NO_SHADOW_CAST_LAYER } from './scene/cloudField';
 import { createControls } from './ui/controls';
 import { sunDirection } from './core/solarPosition';
 import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
 
+// `?fit=frame` gives the whole viewport to the picture and hides the title and
+// console — the shape scripts/capture.js measures in (style.css). Applied
+// before the renderer is created so the first size is already the right one.
+if (new URLSearchParams(window.location.search).get('fit') === 'frame') {
+  document.documentElement.classList.add('fit-frame');
+}
+
 const appHost = document.querySelector<HTMLDivElement>('#app')!;
 
 const renderer = createRenderer(appHost);
-const camera = createCamera(window.innerWidth / window.innerHeight);
+// The canvas is a band inside the page now, not the whole window — its aspect
+// comes from the stage element (style.css). watchResize below corrects this
+// immediately anyway; the value here only has to be non-degenerate.
+const camera = createCamera(Math.max(appHost.clientWidth, 1) / Math.max(appHost.clientHeight, 1));
 
 const scene = new THREE.Scene();
 
@@ -86,6 +96,12 @@ materials.core.uniforms.uShadowMap.value = cloudShadow.texture;
 materials.core.uniforms.uShadowMatrix.value = cloudShadow.matrix;
 
 const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR);
+
+// The high tiers (cirrus, altocumulus) live on their own layer so the shadow
+// camera — which stays on layer 0 — never sees them. The view camera has to be
+// told to see both. See cloudField.ts's `castsShadow` for why they are excluded
+// from the depth pass rather than simply given a weak shadow.
+camera.layers.enable(NO_SHADOW_CAST_LAYER);
 
 // The sky is a fullscreen quad that ignores the camera, so it would otherwise
 // fill the light-space depth map entirely.

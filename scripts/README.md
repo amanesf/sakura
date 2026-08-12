@@ -10,7 +10,14 @@ lives here now.
 
 ```sh
 # deterministic 1408x768 capture (the scene freezes at ?t=<seconds>)
+# implies ?fit=frame — the whole viewport is the picture, which is the frame
+# every crop box and statistic below assumes
 node scripts/capture.js /tmp/shot.png 0
+
+# the real app layout instead (portrait page: title, picture band, console).
+# the canvas is then 115% of the viewport width at the plate's aspect, so this
+# is what to use for checking the layout, never for measuring the sky
+CAPTURE_W=448 CAPTURE_H=998 node scripts/capture.js /tmp/phone.png 0 fit=page
 
 # override the cloud key light without editing source, for sweeps
 node scripts/capture.js /tmp/shot.png 0 "light=-0.78,0.45,-0.44"

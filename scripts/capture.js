@@ -66,8 +66,15 @@ function waitForServer(proc) {
     page.on('console', (m) => {
       if (m.type() === 'error') errors.push(m.text());
     });
+    // Measurement mode by default. The app's own layout is a portrait page
+    // whose canvas is a band across the top (app/src/style.css), so a plain
+    // capture at 1408x768 would return a 1619x353 crop and every fitted crop
+    // box in scripts/README.md would miss. `fit=frame` hands the viewport to
+    // the picture, which is the frame all the statistics assume. Pass
+    // `fit=page` as the extra argument to capture the real app layout instead.
     const extra = process.argv[4] ? `&${process.argv[4]}` : '';
-    await page.goto(`http://localhost:${PORT}/?t=${T}${extra}`, { waitUntil: 'networkidle' });
+    const fit = /(^|&)fit=/.test(extra) ? '' : '&fit=frame';
+    await page.goto(`http://localhost:${PORT}/?t=${T}${fit}${extra}`, { waitUntil: 'networkidle' });
     // Read the canvas out from inside a frame callback rather than using
     // page.screenshot(): under SwiftShader a frame takes long enough that the
     // compositor path times out, and the app's own rAF handler was registered

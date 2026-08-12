@@ -1,5 +1,47 @@
 :root {
   color-scheme: dark;
+
+  /* The picture is deliberately wider than the phone and hangs off both edges:
+     10% of the screen width past the left, 5% past the right. So it is 115%
+     wide and shifted -10%, and the body clips the rest. Bleeding the image off
+     the edges is what stops a landscape picture reading as a small letterboxed
+     card floating in a portrait page. */
+  --bleed-left: 10vw;
+  --bleed-right: 5vw;
+
+  /* The reference frame (core/frame.ts FRAME_WIDTH/HEIGHT). Anything taller
+     than what this aspect gives is not stretched — core/frame.ts crops a
+     sub-rect instead, so the clouds keep their scale. */
+  --plate-aspect: 1.8333;
+
+  /* Ceiling for how much of a tall screen the picture may take, so a desktop
+     window (or a very tall phone) doesn't hand the whole page to the sky and
+     leave the console squashed at the bottom. */
+  --stage-max-height: 46vh;
+}
+
+/* Measurement mode (`?fit=frame`, set by main.ts; see scripts/README.md).
+ *
+ * Every statistic in this project is computed by comparing a capture against
+ * the reference image at its own 1408x768, so the harness needs a way to ask
+ * for exactly that frame and nothing else. In the normal portrait layout the
+ * canvas is a band whose aspect comes from the viewport width and the height
+ * cap, which is the right thing for the app and useless for measurement — at a
+ * 1408x768 capture viewport it produces a 1619x353 strip, i.e. a heavy crop of
+ * the frame, so none of the fitted crops in scripts/README.md would land.
+ *
+ * This hands the whole viewport to the picture and hides the chrome, so the
+ * default capture keeps meaning what every comment in the codebase says it
+ * means. `?fit=page` (capture.js's other mode) captures the real layout. */
+.fit-frame .title,
+.fit-frame .console {
+  display: none;
+}
+
+.fit-frame .stage {
+  width: 100vw;
+  margin-left: 0;
+  height: 100vh;
 }
 
 html,
@@ -14,9 +56,43 @@ body {
   touch-action: none;
 }
 
+/* Portrait phone, top to bottom: title, picture, then everything else pushed
+   to the bottom for the console. The picture sits directly under the title
+   ("中央上部") rather than being vertically centred, because the bottom of the
+   screen is reserved for controls that do not all exist yet. */
+body {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.title {
+  flex: none;
+  padding: calc(env(safe-area-inset-top) + 14px) 16px 10px;
+  text-align: center;
+}
+
+.title__text {
+  margin: 0;
+  font: 600 17px/1.3 system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.stage {
+  flex: none;
+  width: calc(100vw + var(--bleed-left) + var(--bleed-right));
+  margin-left: calc(-1 * var(--bleed-left));
+  /* min(): normally the picture is as tall as its own aspect makes it; on a
+     short/wide viewport the cap wins and core/frame.ts crops the frame rather
+     than the CSS squashing it. */
+  height: min(
+    calc((100vw + var(--bleed-left) + var(--bleed-right)) / var(--plate-aspect)),
+    var(--stage-max-height)
+  );
+}
+
 #app {
-  position: fixed;
-  inset: 0;
   width: 100%;
   height: 100%;
 }
@@ -27,18 +103,21 @@ body {
   height: 100%;
 }
 
-/* Speed slider. Anchored to the bottom of the *viewport*, inside the safe area,
-   because the target device is a phone held sideways whose rounded corners and
-   gesture bar eat the last few millimetres. */
+/* The console. Pushed to the bottom of the page by the auto margin — this is
+   the strip that will hold the full set of controls; today only the speed
+   slider lives in it. */
+.console {
+  flex: none;
+  margin-top: auto;
+  padding: 12px max(16px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-right));
+}
+
 .controls {
-  position: fixed;
-  left: max(16px, env(safe-area-inset-left));
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   align-items: center;
   gap: 12px;
-  opacity: 0.25;
+  opacity: 0.45;
   transition: opacity 0.5s ease;
 }
 

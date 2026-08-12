@@ -4,9 +4,17 @@ import * as THREE from 'three';
  * The app is the reference illustration with its sky punched out
  * (`scripts/plate.js`), so everything is anchored to that image's frame: 1408x768,
  * the camera solved in `core/camera.ts`, and the plate's pixels. The window the
- * app actually runs in is almost never that shape — the target device is a Pixel
- * 10 Pro held sideways, whose landscape viewport is about 998x448 CSS px, an
- * aspect of 2.23 against the plate's 1.833.
+ * app renders into is the `.stage` band of the page, and the target device is
+ * now a Pixel 10 Pro held *upright*: the picture is a landscape band across the
+ * upper part of a portrait page, sized in CSS to the plate's own 1.833 aspect
+ * (bled 10% off the left edge and 5% off the right), so on the phone this
+ * function is asked for the whole frame and crops nothing. The crop rules below
+ * are what keeps every other shape honest — a desktop window, or a screen short
+ * enough that `--stage-max-height` clamps the band, hands the stage a wider
+ * aspect, and that has to cost frame rather than stretch it.
+ *
+ * (Previously the canvas was the whole window on a phone held sideways, a
+ * 998x448 viewport whose 2.23 aspect always cropped.)
  *
  * So the plate is never stretched. A sub-rectangle of the 1408x768 frame is
  * chosen to match the viewport's aspect, and *both* the 3D camera (via
@@ -20,9 +28,9 @@ const FRAME_ASPECT = FRAME_WIDTH / FRAME_HEIGHT;
 
 /** Where the vertical crop is taken from. The hero cumulonimbus crown sits at
  * y≈77 in the reference and the room's floor fills the bottom, so a wider-than-
- * frame viewport gives up floor before it gives up sky: 30% of the lost height
- * off the top, 70% off the bottom. At the Pixel's 2.23 that is 41px off the top,
- * leaving the crown 36px of headroom. */
+ * frame stage gives up floor before it gives up sky: 30% of the lost height
+ * off the top, 70% off the bottom. On the portrait phone nothing is lost (the
+ * stage is cut to 1.833 exactly); this governs the clamped and desktop cases. */
 const TOP_CROP_SHARE = 0.3;
 
 export interface FrameRect {

@@ -1,9 +1,12 @@
 /**
- * The one control the app has: how fast time runs.
+ * The one control the app has so far: how fast time runs.
  *
- * Built for a phone held sideways, so the slider is a full-width strip along the
- * bottom with a large touch target, and it fades out of the way when it has not
- * been touched — the point of the app is the sky, not the UI.
+ * Built for a phone held upright. The controls are no longer floated over the
+ * picture — in the portrait layout the picture is a band across the upper part
+ * of the page and the bottom strip (`.console`) belongs to the controls, so
+ * this mounts into that strip. It still dims when untouched, but only to 0.45
+ * rather than near-invisible: it is not covering the sky any more, so hiding it
+ * hard just makes the app look like it has no controls.
  */
 export interface Controls {
   timeScale: () => number;
@@ -38,7 +41,7 @@ export function createControls(): Controls {
 
   slider.addEventListener('input', sync);
   root.append(slider, label);
-  document.body.appendChild(root);
+  (document.querySelector('.console') ?? document.body).appendChild(root);
   sync();
 
   return { timeScale: () => scale };

@@ -23,6 +23,8 @@ interface PuffSpec {
   rotationY: number;
   levelFrac: number; // 0 (base) .. 1 (top) — used to fade in with growth
   burial: number; // 0 (fully exposed) .. 1 (tucked in a crevice) — filled in after placement
+  boilPhase: number; // where in its own convective cycle this lobe starts
+  boilRate: number; // rad/s of simulated time
 }
 
 interface Nodule {
@@ -32,11 +34,68 @@ interface Nodule {
   rotationY: number;
   levelFrac: number;
   burial: number;
+  boilPhase: number;
+  boilRate: number;
+}
+
+/**
+ * What kind of shape a cluster is, beyond its radius profile.
+ *
+ * The tiers used to describe a cloud with nothing but a size and a profile
+ * curve, so every cluster in a tier was the same shape drawn with a different
+ * random seed — which is a weaker kind of variety than it sounds, because the
+ * scatter statistics were identical and the eye reads statistics, not seeds.
+ * These are the per-cluster degrees of freedom that actually change the
+ * silhouette: how the mass is stretched on the ground, how far it leans
+ * downwind, how coarse its lobes are, and how hard it boils.
+ */
+export interface ClusterShape {
+  /** Horizontal anisotropy of the scatter, applied to puff *positions* rather
+   * than their scales — a cloud drawn out along one axis, not a cloud made of
+   * stretched balls. Real cumulus are rarely circular in plan. */
+  spread: THREE.Vector2;
+  /** Downwind lean, km of horizontal offset per unit of normalised height.
+   * Wind speed increases with altitude, so any cloud deep enough to feel the
+   * difference is sheared; an upright column is the special case, not the
+   * rule, and a field of perfectly upright columns is a strong tell. */
+  lean: THREE.Vector2;
+  /** Multiplier on each puff's own random per-axis stretch. This is how a
+   * fibrous high cloud is made out of the same scatter code as a cumulus:
+   * stretch the lobes far along the wind and squash them flat. */
+  puffStretch: THREE.Vector3;
+  /** Ceiling on a single puff's size as a fraction of its level's radius. */
+  grainCap: number;
+  /** Mean number of satellite lobes riding each main puff. */
+  satellites: number;
+  /** Convective boil: how much of its own size a lobe swells and shrinks by
+   * over its cycle (see update()). */
+  boil: number;
+  /** Seconds for one boil cycle, before per-puff jitter. */
+  boilPeriod: number;
+}
+
+export function defaultClusterShape(): ClusterShape {
+  return {
+    spread: new THREE.Vector2(1, 1),
+    lean: new THREE.Vector2(0, 0),
+    puffStretch: new THREE.Vector3(1, 1, 1),
+    grainCap: 0.25,
+    satellites: 2.3,
+    boil: 0.1,
+    boilPeriod: 210,
+  };
 }
 
 export interface CloudClusterHandle {
   group: THREE.Group;
-  update: (elapsed: number, growth: number, windOffset: THREE.Vector2) => void;
+  /**
+   * `growth` fades levels in from the base up (a tower building). `bulk` scales
+   * every lobe at once (the whole mass swelling and dissolving). They are
+   * separate because they are separate things: a cumulus that grew upward but
+   * never got any wider was the old behaviour, and it is why the clouds read as
+   * rigid props sliding across the sky rather than as clouds.
+   */
+  update: (elapsed: number, growth: number, windOffset: THREE.Vector2, bulk?: number) => void;
   /** Clusters are now built and thrown away as clouds blow through the scene
    * (scene/cloudField.ts), so the per-cluster geometry clone has to be released
    * — it holds its own instance attribute buffers on the GPU. */
@@ -55,11 +114,15 @@ export interface CloudClusterHandle {
 // Non-uniform per-axis scale — a puff that's stretched on x/z or squashed on
 // y reads as an irregular lump rather than a perfect ball, cheaply (no extra
 // geometry, just an anisotropic instance-matrix scale).
-function randomStretch(rand: () => number): THREE.Vector3 {
+function randomStretch(rand: () => number, shape: ClusterShape): THREE.Vector3 {
   // y range tightened (was 0.7-1.3). Combined with the nodule mesh's own
   // vertical squash, the wider range made puffs read as separate flat
   // lozenges stacked in a pile rather than lobes of one mass.
-  return new THREE.Vector3(0.72 + rand() * 0.7, 0.85 + rand() * 0.4, 0.72 + rand() * 0.7);
+  return new THREE.Vector3(
+    (0.72 + rand() * 0.7) * shape.puffStretch.x,
+    (0.85 + rand() * 0.4) * shape.puffStretch.y,
+    (0.72 + rand() * 0.7) * shape.puffStretch.z,
+  );
 }
 
 function buildPuffCluster(
@@ -71,8 +134,10 @@ function buildPuffCluster(
   radiusProfile: (t: number) => number,
   puffsPerLevel: number,
   lightDir: THREE.Vector3,
+  shape: ClusterShape,
 ): PuffSpec[] {
   const rand = mulberry32(seed >>> 0);
+  const boilBase = (Math.PI * 2) / Math.max(shape.boilPeriod, 1);
   const puffs: PuffSpec[] = [];
   const heightSpan = Math.max(topAlt - baseAlt, 0.001);
   // Fixed vertical step between levels, independent of radiusProfile — where
@@ -166,16 +231,35 @@ function buildPuffCluster(
       // radius against the reference's 35px, and a bump on the outline *is* a
       // puff seen edge-on, so the only way to shrink one is to shrink the
       // other.
-      const puffScale = Math.min(puffScaleRaw, radius * 0.25);
+      const puffScale = Math.min(puffScaleRaw, radius * shape.grainCap);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
       // interleave instead of sitting in strict horizontal bands.
       const scale = Math.max(puffScale, radius * 0.08, levelSpacing * 0.36);
       const yJitter = (rand() - 0.5) * levelSpacing * 1.1;
-      const position = new THREE.Vector3(centerXZ.x + c.x, levelAlt + yJitter, centerXZ.y + c.z);
-      const stretch = randomStretch(rand);
-      puffs.push({ position, scale, stretch, rotationY: rand() * Math.PI * 2, levelFrac: t, burial: 0 });
+      // Anisotropy and shear are applied here, to the scattered *offset* from
+      // the cluster axis, so they change the shape of the mass without
+      // touching any of the size statistics the lobes were tuned to.
+      const position = new THREE.Vector3(
+        centerXZ.x + c.x * shape.spread.x + shape.lean.x * t,
+        levelAlt + yJitter,
+        centerXZ.y + c.z * shape.spread.y + shape.lean.y * t,
+      );
+      const stretch = randomStretch(rand, shape);
+      puffs.push({
+        position,
+        scale,
+        stretch,
+        rotationY: rand() * Math.PI * 2,
+        levelFrac: t,
+        burial: 0,
+        boilPhase: rand() * Math.PI * 2,
+        // Small lobes turn over faster than large ones — convective overturning
+        // time goes with the size of the cell — so the rate is scaled by how
+        // big this puff came out relative to its level.
+        boilRate: boilBase * (0.6 + rand() * 0.8) * (1 + 0.9 * (1 - Math.min(scale / Math.max(radius * shape.grainCap, 1e-4), 1))),
+      });
 
       // A tier of small satellite puffs riding on each main puff — "小さく
       //複雑な塊" (reference-image analysis: the silhouette is a hierarchy of
@@ -190,20 +274,23 @@ function buildPuffCluster(
       // large and unbroken, while this cloud was fringed with a spray of
       // detached specks that punched sky through the mass and cloud through
       // the sky, so both averaged out to the same mid value at large scale.
-      const satelliteCount = 1 + Math.floor(rand() * 2.6);
+      const parent = puffs[puffs.length - 1];
+      const satelliteCount = Math.round(shape.satellites * (0.5 + rand()));
       for (let s = 0; s < satelliteCount; s++) {
         const sa = rand() * Math.PI * 2;
-        const sr = puffs[puffs.length - 1].scale * (0.2 + rand() * 0.3);
+        const sr = parent.scale * (0.2 + rand() * 0.3);
         const satPos = position.clone().add(
           new THREE.Vector3(Math.cos(sa) * sr, (rand() - 0.5) * sr * 0.6, Math.sin(sa) * sr),
         );
         puffs.push({
           position: satPos,
-          scale: puffs[puffs.length - 1].scale * (0.3 + rand() * 0.42),
-          stretch: randomStretch(rand),
+          scale: parent.scale * (0.3 + rand() * 0.42),
+          stretch: randomStretch(rand, shape),
           rotationY: rand() * Math.PI * 2,
           levelFrac: t,
           burial: 0,
+          boilPhase: rand() * Math.PI * 2,
+          boilRate: boilBase * (1.3 + rand() * 1.2),
         });
       }
     });
@@ -267,6 +354,14 @@ function buildPuffCluster(
   return puffs;
 }
 
+// Base meshes are shared across clusters (they are the expensive part), so the
+// number of them is the hard limit on how many *distinct* lobe shapes the sky
+// can contain. Five was low enough to see: a cluster carries hundreds of lobes,
+// so each base mesh appeared dozens of times within one cloud, and repeated
+// silhouettes at that density read as a pattern however the instances are
+// scaled and rotated. Twelve costs twelve 40x22 spheres of memory — nothing —
+// and cuts the repeat rate per cluster by the same factor.
+const NODULE_VARIANTS = 12;
 const coreGeometryCache = new Map<number, THREE.BufferGeometry>();
 function coreGeometryFor(variant: number): THREE.BufferGeometry {
   let g = coreGeometryCache.get(variant);
@@ -287,8 +382,19 @@ export function createCloudCluster(
   puffsPerLevel: number,
   materials: CloudMaterials,
   lightDir: THREE.Vector3,
+  shape: ClusterShape = defaultClusterShape(),
 ): CloudClusterHandle {
-  const specs = buildPuffCluster(seed, centerXZ, baseAlt, topAlt, levels, radiusProfile, puffsPerLevel, lightDir);
+  const specs = buildPuffCluster(
+    seed,
+    centerXZ,
+    baseAlt,
+    topAlt,
+    levels,
+    radiusProfile,
+    puffsPerLevel,
+    lightDir,
+    shape,
+  );
   const nodules: Nodule[] = specs.map((s) => ({
     base: s.position,
     scale: s.scale,
@@ -296,6 +402,8 @@ export function createCloudCluster(
     rotationY: s.rotationY,
     levelFrac: s.levelFrac,
     burial: s.burial,
+    boilPhase: s.boilPhase,
+    boilRate: s.boilRate,
   }));
 
   const group = new THREE.Group();
@@ -303,7 +411,7 @@ export function createCloudCluster(
   // geometry: the displaced base mesh is cached and shared (it is the
   // expensive part), but each cluster needs its own attribute buffers or
   // clusters would overwrite each other's occlusion values.
-  const coreGeom = coreGeometryFor(Math.floor(seed) % 5).clone();
+  const coreGeom = coreGeometryFor(Math.abs(Math.floor(seed)) % NODULE_VARIANTS).clone();
 
   const coreMesh = new THREE.InstancedMesh(coreGeom, materials.core, nodules.length);
   group.add(coreMesh);
@@ -347,16 +455,35 @@ export function createCloudCluster(
   const p = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0);
 
-  function update(_elapsed: number, growth: number, windOffset: THREE.Vector2): void {
+  function update(elapsed: number, growth: number, windOffset: THREE.Vector2, bulk = 1): void {
     for (let i = 0; i < nodules.length; i++) {
       const n = nodules[i];
       // Growth fades a level in (and slightly up) rather than popping —
       // levels above the current growth fraction shrink toward zero.
       const growthVisibility = THREE.MathUtils.smoothstep(growth, n.levelFrac - 0.12, n.levelFrac + 0.02);
-      p.set(n.base.x + windOffset.x, n.base.y, n.base.z + windOffset.y);
+
+      // Convective boil. A cumulus is not a solid that translates: it is a
+      // standing pattern in rising air, and its individual turrets visibly
+      // swell and collapse on a timescale of a minute or two while the cloud
+      // as a whole drifts. Each lobe therefore breathes on its own phase and
+      // its own rate, which is also what stops a translating cluster reading
+      // as one rigid object — nothing in the mass moves quite in step.
+      //
+      // Deliberately a function of `elapsed` (= simTime) and per-puff
+      // constants only, with no accumulated state, so the whole field stays
+      // the pure function of simTime that scripts/capture.js's `?t=` needs.
+      const cycle = elapsed * n.boilRate + n.boilPhase;
+      const breathe = 1 + shape.boil * Math.sin(cycle);
+      // A little vertical drift with it. Scaling alone leaves each lobe pinned
+      // to a fixed centre, which still reads as a fixed structure pulsing;
+      // letting the crown of the cycle sit slightly higher gives the mass the
+      // slow roll of air actually going up through it.
+      const lift = shape.boil * n.scale * 0.35 * Math.sin(cycle * 0.5 + n.boilPhase);
+
+      p.set(n.base.x + windOffset.x, n.base.y + lift, n.base.z + windOffset.y);
       q.setFromAxisAngle(up, n.rotationY);
 
-      const coreScale = n.scale * Math.max(growthVisibility, 0.0001);
+      const coreScale = n.scale * bulk * breathe * Math.max(growthVisibility, 0.0001);
       s.set(coreScale * n.stretch.x, coreScale * n.stretch.y, coreScale * n.stretch.z);
       m.compose(p, q, s);
       coreMesh.setMatrixAt(i, m);
