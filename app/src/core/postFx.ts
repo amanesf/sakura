@@ -9,7 +9,7 @@ import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
 import { PlateShader } from '../effects/plateShader';
 import { HorizonHazeShader } from '../effects/horizonHaze';
-import { FRAME_HEIGHT, type FrameRect } from './frame';
+import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
@@ -50,7 +50,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // and applies only where the cloud is actually bright — which matches the
   // reference, whose soft edges are about half its contour rather than all of
   // it. The threshold stays at 8.2 so only the genuinely sunlit crown blooms.
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.12, 0.80, 8.2);
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(FRAME_WIDTH, FRAME_HEIGHT), 0.12, 0.80, 8.2);
   composer.addPass(bloomPass);
 
   const gradePass = new ShaderPass(GradeShader);
@@ -65,13 +65,13 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // pixels — the cloud crown sits near 8.0 while its shadows sit below 0.5,
   // so almost every window would pick the same quadrant and the filter would
   // smear rather than form painterly regions.
-  const kuwaharaPass = new AnisotropicKuwaharaPass(window.innerWidth, window.innerHeight);
+  const kuwaharaPass = new AnisotropicKuwaharaPass(FRAME_WIDTH, FRAME_HEIGHT);
   composer.addPass(kuwaharaPass);
 
   // Last, after the painterly filter: this widens the separation between the
   // large light and shadow masses, and running it before Kuwahara would just
   // hand that filter a wider range to average back down.
-  const macroPass = new MacroContrastPass(window.innerWidth, window.innerHeight);
+  const macroPass = new MacroContrastPass(FRAME_WIDTH, FRAME_HEIGHT);
   composer.addPass(macroPass);
 
   // Before the plate, so it works on the rendered sky only.

@@ -32,12 +32,39 @@ const sky = createSky();
 scene.add(sky.mesh);
 
 const postFx = createPostFx(renderer, scene, camera);
-watchResize(renderer, camera, (w, h) => {
-  postFx.setSize(w, h);
+
+// The render resolution is fixed to the reference frame's own pixels, and the
+// canvas is then scaled to whatever size the CSS gave it.
+//
+// This is not a performance choice, it is a correctness one. Every constant in
+// core/postFx.ts and the passes it drives — the bloom radius, the Kuwahara
+// kernel, the macro-contrast scale, the horizon haze texel — is expressed in
+// *buffer pixels*, and every one of them was fitted against the reference at
+// 1408x768. Sizing the buffer to the element instead meant those radii covered
+// a different fraction of the picture on every screen: the phone's band is
+// 515 CSS px wide, so at DPR 2 the same bloom radius spread over 2.7x more of
+// the frame than it did when it was tuned, and the picture came out visibly
+// softer than the measured one. Two screens showing the same simTime would not
+// agree on the image.
+//
+// Pinning the buffer to the frame makes the app's output identical everywhere
+// and identical to what scripts/capture.js measures, which is the only version
+// of the picture that has ever been fitted to anything. On the target device it
+// is also close to 1:1 in device pixels (448 CSS x DPR 3 = 1344 against 1408),
+// so the downscale costs nothing visible.
+watchResize(renderer, (cssWidth, cssHeight) => {
   // The plate and the 3D camera get the same sub-rect of the reference's
   // 1408x768 frame, so the painted window frames stay registered to the sky
-  // whatever shape the viewport is (core/frame.ts).
-  const rect = visibleRect(w / h);
+  // whatever shape the viewport is (core/frame.ts). The buffer is that
+  // sub-rect at 1:1, so the CSS size only decides *which* sub-rect, never how
+  // many pixels it is drawn with.
+  const rect = visibleRect(cssWidth / cssHeight);
+  const bufferWidth = Math.max(Math.round(rect.width), 1);
+  const bufferHeight = Math.max(Math.round(rect.height), 1);
+  // updateStyle: false — the canvas keeps its 100%/100% CSS size from
+  // style.css, which is what performs the scale to the element.
+  renderer.setSize(bufferWidth, bufferHeight, false);
+  postFx.setSize(bufferWidth, bufferHeight);
   applyToCamera(camera, rect);
   postFx.setFrameRect(rect);
 });
