@@ -96,12 +96,16 @@ const TOWER_TOP_ALT = 10.8;
 // Angular width, not a size in km, is what the reference constrains. Distance
 // is composition-anchored and the top elevation atan(10.8/16.92) = 32.6°
 // already matches the reference's crown at y≈77 (≈33°), so the radius is the
-// only free term. This is the radius at the tower's widest point (its
-// shoulder); towerRadiusProfile() below documents the per-band fit that puts
-// the reference's maximum at 10.5° of angular width, i.e.
-// 16.92·tan(10.5°/2) = 1.56km. The previous 4.3 was 28.6° across — nearly
-// three times too wide, which is what pushed cloud into the 17-33° bands.
-const TOWER_RADIUS = 1.58;
+// only free term, and towerRadiusProfile() below fits it band by band.
+//
+// The conversion from radius to angular width cannot be done geometrically:
+// two captures at radius 1.58 and 2.23 rendered the shoulder band 5.1° and
+// 9.2° wide where the geometry predicts 10.4° and 14.7°, because the cluster's
+// puffs do not fill the nominal envelope (and bloom adds a roughly fixed
+// number of pixels regardless of mass size). Calibrating on those two measured
+// points instead — 8.0°/km at the shoulder — puts the reference's 10.5° at
+// 2.21km. The old 4.3 was still nearly twice that.
+const TOWER_RADIUS = 2.2;
 const TOWER_CYCLE_SECONDS = 260;
 function towerRadiusProfile(t: number): number {
   // An explicit three-part silhouette rather than a single symmetric bump.
@@ -126,8 +130,13 @@ function towerRadiusProfile(t: number): number {
   // widths ran 4.6°/6.1°/9.2°/12.5° over those same bands: an upside-down
   // cone. Below t≈0.6 the reference tower is behind the mid-level deck, so
   // that part is unconstrained by measurement and just carries the taper on.
-  const shoulder = 0.45 + 0.55 * THREE.MathUtils.smoothstep(t, 0.42, 0.75);
-  const crown = 1 - 0.62 * THREE.MathUtils.smoothstep(t, 0.73, 1.05);
+  // Radii solved from two captures per band (see TOWER_RADIUS on why the
+  // geometric conversion is not usable): t=0.61 → 1.75km, 0.71 → 2.21km,
+  // 0.81 → 2.15km, 0.90 → 1.97km. So the reference tower is far more
+  // columnar than a taper from a wide base, holding close to full width from
+  // the shoulder up to 0.9 and only drawing in at the crown.
+  const shoulder = 0.62 + 0.38 * THREE.MathUtils.smoothstep(t, 0.5, 0.78);
+  const crown = 1 - 0.55 * THREE.MathUtils.smoothstep(t, 0.85, 1.02);
   return TOWER_RADIUS * shoulder * crown;
 }
 
