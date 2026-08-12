@@ -280,9 +280,12 @@ const BANK_TIERS = [
   // nothing in it at all. The first lift (to 7.4 / 18.6°) only moved it to
   // 14.7%, so the deck has to overlap the tower's band rather than stop just
   // below it.
-  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 6.0, topHi: 9.0, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
+  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 5.6, topHi: 7.9, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
   { count: 16, zNear: 30, zSpan: 11, baseAlt: 2.2, topLo: 5.0, topHi: 8.2, radLo: 4.0, radHi: 7.5, xStep: 6.0, wind: 0.4 },
-  { count: 14, zNear: 55, zSpan: 21, baseAlt: 1.6, topLo: 3.2, topHi: 5.4, radLo: 5.0, radHi: 9.0, xStep: 8.0, wind: 0.25 },
+  // Trimmed after measurement: the horizon band (0.8°) ran 57% against the
+  // reference's 42% and 3.5° ran 76% against 70%, and this is the only tier
+  // that reaches those bands.
+  { count: 11, zNear: 55, zSpan: 21, baseAlt: 1.6, topLo: 2.6, topHi: 4.4, radLo: 5.0, radHi: 9.0, xStep: 8.0, wind: 0.25 },
 ];
 BANK_TIERS.forEach((tier, t) => {
   for (let i = 0; i < tier.count; i++) {
