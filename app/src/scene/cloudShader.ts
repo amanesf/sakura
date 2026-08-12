@@ -116,7 +116,11 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // にじみ: multi-scale noise on the shading term itself, so shadow
       // regions mottle and bleed into the lit areas instead of being clean
       // geometric bands.
-      uNoiseAmount: { value: 0.34 },
+      // 0.34 -> 0.28. The tower's total tonal spread overshot (sd 22.1 against
+      // the reference's 18.7) while its *systematic* lateral gradient was still
+      // short (gradX -6.7 against -10.0) — too much undirected mottle, too
+      // little modelling. Trading noise for wash moves both the right way.
+      uNoiseAmount: { value: 0.28 },
       uNoiseScale: { value: 2.1 },
       uDetailAmount: { value: 0.2 },
       uDetailScale: { value: 6.5 },
@@ -159,7 +163,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // lateral read it exists for: gradX fell from -6.9 to -5.5 against the
       // reference's -10.0. Half the reduction is given back, which the smaller
       // uWashScale keeps inside the clamp.
-      uWashAmount: { value: 0.46 },
+      uWashAmount: { value: 0.58 },
       uFieldCenter: { value: new THREE.Vector3(0, 4, -26) },
       uDetailFocus: { value: 0.76 },
       uHighlightKnee: { value: 0.82 },
@@ -201,9 +205,18 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // 209) at that elevation), so the bank stays cloud rather than dissolving
       // into the sky — it just stops being white.
       uHazeColor: { value: new THREE.Vector3(0.1733, 0.4668, 0.8792) },
+      // Left at 12km / 0.033. Pushing the start out to 16km and steepening to
+      // 0.055 was tried, to haze the near bank tier harder, and it backfired:
+      // it also dropped the hero tower's own haze from 0.15 to 0.05, and both
+      // the highlight boost (gated by 1-haze) and the bloom threshold key off
+      // how bright the tower ends up, so the tower bloomed into a glare halo
+      // over the sky. Measured, softFrac went 54.0% -> 84.4% and medEdge
+      // 9px -> 16px, i.e. straight back to where the deleted fringe shell had
+      // them, and the lateral read collapsed from 12.0 to 2.7. The bank has to
+      // be brought down without touching the tower's distance term.
       uHazeStart: { value: 12.0 },
       uHazeDensity: { value: 0.033 },
-      uHazeMax: { value: 0.85 },
+      uHazeMax: { value: 0.96 },
       // Cut hard from 0.45. With the lobe count raised to reference density,
       // nearly every pixel of the silhouette is near some lobe's grazing
       // angle, so a strong rim term stops being an edge accent and becomes a
@@ -214,7 +227,15 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // whole term (ambient floor + bias) left less headroom above it and the
       // accent stopped registering: rimFrac fell from 5.0% to 3.9% against the
       // reference's 5.3% without this term itself changing.
-      uRimStrength: { value: 1.9 },
+      // 1.9 -> 1.4: with uContrast at 1.80 the accent overshot, rimFrac 10.3%
+      // against the reference's 5.3%.
+      // 1.4 -> 1.0. rimFrac sat at 9.6% against the reference's 5.3%, and the
+      // mean edge-minus-interior delta came out at +6.0 where the reference's
+      // is -8.3 — this render's contour is systematically brighter than its
+      // interior where the reference's is slightly darker. Part of that is now
+      // the bloom, which is also what buys the correct medEdge, so the
+      // shader-side accent gives way rather than the glare.
+      uRimStrength: { value: 1.0 },
       // Contrast expansion applied to s before it indexes the ramp. Without
       // it the term is a sum of several roughly-uniform quantities, so it
       // piles up around 0.5 by the central limit theorem and the render comes
@@ -231,7 +252,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // both quartiles at once — the reference's p25/p75 sit at s = 0.244 and
       // 0.87, the render's at 0.42 and 0.85, and the pair of equations gives
       // very nearly this contrast with the bias below.
-      uContrast: { value: 1.80 },
+      uContrast: { value: 1.70 },
       // Downward shift after the contrast expansion. Expanding around 0.5 is
       // symmetric, but the term's own mean sits above 0.5 (the rim and the
       // light-facing weight both push up), so without this the whole render
@@ -524,8 +545,17 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // a distant lobe pushed to 12.0 is still near-white after being mixed
         // 72% toward the sky colour, which is why the far bank kept coming out
         // as bright as the hero tower.
+        // Gated by the *square* of the remaining transmittance, not by
+        // (1 - haze) directly. The boost pushes toward 8.5 in linear HDR, which
+        // is an enormous value next to the haze target's ~0.5, so even the 15%
+        // that survived a haze of 0.85 still dominated the blend and kept the
+        // far bank near white — the measured 218.9 against the reference's
+        // 193.1 in the lowest band. Squaring takes that 15% to 2%, which is
+        // what a sunlit crown seen through 50km of airlight should retain,
+        // while the hero tower (haze 0.15) only goes from 85% to 72%.
         float hot = smoothstep(uHighlightKnee, 1.0, s);
-        color = mix(color, uWhiteHDR, clamp(hot * uHighlightGain, 0.0, 1.0) * (1.0 - haze));
+        float clear = 1.0 - haze;
+        color = mix(color, uWhiteHDR, clamp(hot * uHighlightGain, 0.0, 1.0) * clear * clear);
 
         color = mix(color, uHazeColor, haze);
 
