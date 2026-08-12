@@ -15,6 +15,8 @@ import {
 } from './core/daylight';
 import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
+import { createCloudMask } from './scene/cloudMask';
+import { createOutlinePanel } from './ui/outlinePanel';
 
 // `?fit=frame` gives the whole viewport to the picture and hides the title and
 // console — the shape scripts/capture.js measures in (style.css). Applied
@@ -157,8 +159,24 @@ const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR, initial.c
 camera.layers.enable(NO_SHADOW_CAST_LAYER);
 
 // The sky is a fullscreen quad that ignores the camera, so it would otherwise
-// fill the light-space depth map entirely.
+// fill the light-space depth map entirely — and, for the same reason, the
+// cloud mask.
 const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
+
+// The line-drawing panel in the lower half of the page. A quarter of the
+// picture's resolution: it is thresholded to a boolean and traced, so detail
+// past the width of a line is thrown away anyway, and this is small enough that
+// reading it back to the CPU costs little.
+const outlineHost = document.querySelector<HTMLElement>('.outline');
+const cloudMask = outlineHost ? createCloudMask(352, 192) : null;
+const outlinePanel = outlineHost ? createOutlinePanel(outlineHost) : null;
+// Rebuilt about three times a second, not every frame. It costs a second pass
+// over all the cloud geometry plus a synchronous readback — a GPU stall — and
+// it is a diagram of clouds that take minutes to cross the sky, so there is
+// nothing in it that needs sixty updates a second. (Not measured on the target
+// device; if it ever hitches, this number is the dial.)
+const OUTLINE_EVERY = 20;
+let frameCount = 0;
 
 const controls = createControls(initial);
 
@@ -240,6 +258,15 @@ function renderLoop() {
   cloudShadow.update(renderer, scene, hiddenDuringShadowPass);
 
   postFx.render();
+
+  if (cloudMask && outlinePanel && frameCount % OUTLINE_EVERY === 0) {
+    outlinePanel.draw(
+      cloudMask.update(renderer, scene, camera, hiddenDuringShadowPass),
+      cloudMask.width,
+      cloudMask.height,
+    );
+  }
+  frameCount++;
 }
 
 /**
