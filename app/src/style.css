@@ -28,24 +28,11 @@
      page that is all one value has no light in it — the picture stopped being
      the brightest thing on screen, which is the entire premise. The glow is now
      tight around the picture and everything else falls away to ink. */
+  /* The page's palette. The canvas paints the graded field itself
+     (core/compose.ts, which carries the same values in GLSL); these are kept
+     for the parts CSS still draws — the body's own backdrop before the first
+     frame arrives, and the type. */
   --ink: #03050a;
-  --ink-mid: #050d18;
-  --lit: #0b2036;
-  --spill: rgba(96, 178, 232, 0.34);
-
-  /* Where the picture's lower edge falls, as a fraction of the viewport. The
-     ambience is aimed at this line rather than at the middle of the screen:
-     the light has to look like it is coming *out of* the picture, so its
-     brightest point belongs just below the picture's foot, not behind it where
-     the picture would hide it. Kept in sync with the .stage height below by
-     the same expression. */
-  --stage-foot: calc(
-    clamp(0px, env(safe-area-inset-top), 60px) + 84px +
-      min(
-        calc((100vw + var(--bleed-left) + var(--bleed-right)) / var(--plate-aspect)),
-        var(--stage-max-height)
-      )
-  );
 
   --text: #eaf2f8;
   --text-dim: rgba(217, 233, 245, 0.5);
@@ -67,57 +54,18 @@ body {
 /* Portrait phone, top to bottom: title, picture, console. The console sits
    directly under the picture rather than being pushed to the foot of the
    screen — everything the eye needs is in the upper two thirds, and the space
-   below it is deliberate darkness the ambience grades into, not a gap. */
+   below it is the graded darkness the canvas paints, not a gap. */
 body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
-/* --- The page's light ------------------------------------------------- */
-
-.ambience {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  /* Three layers, all aimed at the picture's foot (--stage-foot).
-
-     The first version put the radial's centre at 26% of the viewport, which is
-     *behind* the picture — so the only part of the glow that ever showed was
-     its outer falloff, and the whole page below the picture read as flat
-     black. The light has to spill out of the picture and down the page, so its
-     source sits on the picture's lower edge and its falloff runs into the
-     empty space rather than under the artwork.
-
-     Bottom to top in paint order: the base grade, a wide soft pool, then a
-     tighter hot core right at the edge. */
-  background:
-    /* A vignette, so the page has corners. Without it the field runs flat to
-       the edges of the screen and the whole thing reads as a coloured
-       background rather than as a lit space. */
-    radial-gradient(120% 70% at 50% 42%, transparent 30%, rgba(0, 0, 0, 0.55) 100%),
-    radial-gradient(70% 16% at 50% var(--stage-foot), var(--spill) 0%, transparent 72%),
-    radial-gradient(
-      130% 30% at 50% var(--stage-foot),
-      rgba(96, 178, 232, 0.16) 0%,
-      rgba(96, 178, 232, 0.04) 45%,
-      transparent 80%
-    ),
-    linear-gradient(
-      to bottom,
-      var(--ink-mid) 0%,
-      var(--lit) calc(var(--stage-foot) - 30px),
-      var(--ink-mid) calc(var(--stage-foot) + 26vh),
-      var(--ink) 100%
-    );
-}
-
-/* Everything above the ambience. */
+/* Everything above the canvas, which paints the page's light itself
+   (core/compose.ts). */
 .title,
 .stage,
-.console,
-.outline {
+.console {
   position: relative;
   z-index: 1;
 }
@@ -212,13 +160,20 @@ body {
     calc((100vw + var(--bleed-left) + var(--bleed-right)) / var(--plate-aspect)),
     var(--stage-max-height)
   );
-  /* The picture is the only lit object on the page, so it casts. */
+  /* The picture is the only lit object on the page, so it casts. The stage is
+     an empty spacer — the picture itself is drawn into this rectangle by the
+     canvas behind it — so the shadow is the one thing it still paints. */
   box-shadow: 0 18px 60px -18px rgba(9, 34, 56, 0.9);
+  pointer-events: none;
 }
 
+/* The canvas: the whole page, behind everything. It is opaque and paints the
+   page's own light as well as the picture (core/compose.ts). */
 #app {
-  width: 100%;
-  height: 100%;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
 }
 
 #app canvas {
@@ -342,25 +297,6 @@ body {
   box-shadow: 0 0 0 5px rgba(124, 198, 240, 0.18), 0 0 14px rgba(124, 198, 240, 0.8);
 }
 
-/* --- The outline panel ------------------------------------------------- */
-
-/* Takes whatever is left below the console. It is the only element on the page
-   that is allowed to grow, which is the point: the picture and the console are
-   both fixed, so the drawing simply occupies the darkness rather than being
-   given a size of its own. */
-.outline {
-  flex: 1 1 auto;
-  min-height: 0;
-  margin-top: 22px;
-  position: relative;
-}
-
-.outline__canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
 /* --- Measurement mode -------------------------------------------------- */
 
 /* `?fit=frame`, set by main.ts; see scripts/README.md.
@@ -373,12 +309,12 @@ body {
  * capture viewport it produces a 1619x353 strip, i.e. a heavy crop.
  *
  * This hands the whole viewport to the picture and hides every piece of page
- * chrome, including the ambience and the bottom edge fade, so a capture is the
- * render and nothing else. `?fit=page` captures the real layout. */
+ * chrome, so a capture is the render and nothing else. In this mode the
+ * composer also writes straight to the canvas rather than going through
+ * core/compose.ts, which keeps the measured frame byte-exact.
+ * `?fit=page` captures the real layout. */
 .fit-frame .title,
-.fit-frame .console,
-.fit-frame .ambience,
-.fit-frame .outline {
+.fit-frame .console {
   display: none;
 }
 

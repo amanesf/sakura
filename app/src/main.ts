@@ -15,8 +15,8 @@ import {
 } from './core/daylight';
 import { createPostFx } from './core/postFx';
 import { createCloudShadow } from './scene/cloudShadow';
-import { createCloudMask } from './scene/cloudMask';
-import { createOutlinePanel } from './ui/outlinePanel';
+import { createCloudLayer } from './scene/cloudLayer';
+import { createCompose } from './core/compose';
 
 // `?fit=frame` gives the whole viewport to the picture and hides the title and
 // console — the shape scripts/capture.js measures in (style.css). Applied
@@ -39,6 +39,9 @@ const sky = createSky();
 scene.add(sky.mesh);
 
 const postFx = createPostFx(renderer, scene, camera);
+const compose = createCompose();
+const fitFrame = document.documentElement.classList.contains('fit-frame');
+postFx.setRenderToScreen(fitFrame);
 
 // The render resolution is fixed to the reference frame's own pixels, and the
 // canvas is then scaled to whatever size the CSS gave it.
@@ -59,21 +62,52 @@ const postFx = createPostFx(renderer, scene, camera);
 // of the picture that has ever been fitted to anything. On the target device it
 // is also close to 1:1 in device pixels (448 CSS x DPR 3 = 1344 against 1408),
 // so the downscale costs nothing visible.
+const stageEl = document.querySelector<HTMLElement>('.stage');
+
 watchResize(renderer, (cssWidth, cssHeight) => {
+  // Two resolutions now, and keeping them apart is the point.
+  //
+  // The *canvas* is the whole page, so it is sized in device pixels like any
+  // other canvas. The *picture* is not: it is rendered into core/postFx.ts's
+  // buffer at exactly the sub-rect of the reference frame that fits the band,
+  // which is the invariant every fitted constant in this project depends on
+  // (see the note on buffer-pixel radii below). The canvas getting bigger or
+  // smaller does not change how the picture is drawn, only how large it lands.
+  // In measurement mode the composer writes straight to the canvas, so the
+  // canvas has to be the frame, exactly as it was before any of this existed.
+  const dpr = fitFrame ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  renderer.setSize(Math.round(cssWidth * dpr), Math.round(cssHeight * dpr), false);
+
+  // The band the picture goes in. In measurement mode that is the whole canvas.
+  const band = stageEl && !fitFrame
+    ? stageEl.getBoundingClientRect()
+    : { left: 0, top: 0, width: cssWidth, height: cssHeight } as DOMRect;
+
   // The plate and the 3D camera get the same sub-rect of the reference's
   // 1408x768 frame, so the painted window frames stay registered to the sky
-  // whatever shape the viewport is (core/frame.ts). The buffer is that
-  // sub-rect at 1:1, so the CSS size only decides *which* sub-rect, never how
-  // many pixels it is drawn with.
-  const rect = visibleRect(cssWidth / cssHeight);
+  // whatever shape the band is (core/frame.ts).
+  const rect = visibleRect(Math.max(band.width, 1) / Math.max(band.height, 1));
   const bufferWidth = Math.max(Math.round(rect.width), 1);
   const bufferHeight = Math.max(Math.round(rect.height), 1);
-  // updateStyle: false — the canvas keeps its 100%/100% CSS size from
-  // style.css, which is what performs the scale to the element.
-  renderer.setSize(bufferWidth, bufferHeight, false);
   postFx.setSize(bufferWidth, bufferHeight);
   applyToCamera(camera, rect);
   postFx.setFrameRect(rect);
+
+  // Where that band sits on the canvas, in UV with y running up.
+  compose.setLayout(
+    new THREE.Vector4(
+      band.left / cssWidth,
+      1 - (band.top + band.height) / cssHeight,
+      band.width / cssWidth,
+      band.height / cssHeight,
+    ),
+    // How far the silhouette reaches below the picture, as a multiple of the
+    // picture's own height — enough to carry it past the console and fade out
+    // near the foot of the page.
+    Math.max((cssHeight - (band.top + band.height)) / Math.max(band.height, 1), 0.2),
+  );
+  compose.setOverlayEnabled(!fitFrame);
+  compose.setAspect(cssWidth / Math.max(cssHeight, 1));
 });
 
 // Art-directed key light for the clouds — deliberately *not* the true sun
@@ -163,20 +197,13 @@ camera.layers.enable(NO_SHADOW_CAST_LAYER);
 // cloud mask.
 const hiddenDuringShadowPass: THREE.Object3D[] = [sky.mesh];
 
-// The line-drawing panel in the lower half of the page. A quarter of the
-// picture's resolution: it is thresholded to a boolean and traced, so detail
-// past the width of a line is thrown away anyway, and this is small enough that
-// reading it back to the CPU costs little.
-const outlineHost = document.querySelector<HTMLElement>('.outline');
-const cloudMask = outlineHost ? createCloudMask(352, 192) : null;
-const outlinePanel = outlineHost ? createOutlinePanel(outlineHost) : null;
-// Rebuilt about three times a second, not every frame. It costs a second pass
-// over all the cloud geometry plus a synchronous readback — a GPU stall — and
-// it is a diagram of clouds that take minutes to cross the sky, so there is
-// nothing in it that needs sixty updates a second. (Not measured on the target
-// device; if it ever hitches, this number is the dial.)
-const OUTLINE_EVERY = 20;
-let frameCount = 0;
+// The clouds on their own, for the echo under the picture (core/compose.ts).
+// It never leaves the GPU. The size is a fragment-cost choice only — the pass
+// draws the same geometry whatever its resolution — so it is set by how much
+// upscale the echo can take before it looks blocky rather than soft, not by
+// how much it costs.
+const cloudLayer = fitFrame ? null : createCloudLayer(512, 280);
+if (cloudLayer) compose.setClouds(cloudLayer.texture);
 
 const controls = createControls(initial);
 
@@ -258,15 +285,14 @@ function renderLoop() {
   cloudShadow.update(renderer, scene, hiddenDuringShadowPass);
 
   postFx.render();
-
-  if (cloudMask && outlinePanel && frameCount % OUTLINE_EVERY === 0) {
-    outlinePanel.draw(
-      cloudMask.update(renderer, scene, camera, hiddenDuringShadowPass),
-      cloudMask.width,
-      cloudMask.height,
-    );
-  }
-  frameCount++;
+  if (fitFrame) return;
+  // Asked for every frame, never cached: EffectComposer ping-pongs between two
+  // render targets, so *which* one holds the finished picture depends on how
+  // many passes ran — and the rain pass enables and disables itself. A texture
+  // grabbed once at startup is right only half the time.
+  compose.setPicture(postFx.outputTexture());
+  cloudLayer?.update(renderer, scene, camera, hiddenDuringShadowPass);
+  compose.render(renderer);
 }
 
 /**

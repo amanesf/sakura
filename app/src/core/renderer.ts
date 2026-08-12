@@ -4,7 +4,15 @@ export function createRenderer(canvasHost: HTMLElement): THREE.WebGLRenderer {
   const renderer = new THREE.WebGLRenderer({
     antialias: false, // the sky is one fullscreen raymarch shader; MSAA on a single triangle buys nothing
     powerPreference: 'high-performance',
+    // Opaque, and it covers the whole page. Two attempts at a transparent
+    // canvas over the CSS ambience gradient — one with straight alpha, one with
+    // premultiplied — both came out solid white everywhere the canvas drew
+    // nothing. core/compose.ts paints the page's background itself instead,
+    // which is not a workaround so much as the simpler design: there is no
+    // compositing left to get wrong, and the light on the page and the light in
+    // the picture come out of the same shader.
   });
+  renderer.setClearColor(0x03050a, 1);
   // Pixel ratio is deliberately 1 and the drawing buffer is sized by main.ts
   // to the reference frame's own pixels, not to the element's CSS size times
   // the device's DPR. See main.ts for why the render resolution is fixed.

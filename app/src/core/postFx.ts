@@ -14,6 +14,21 @@ import { HorizonHazeShader } from '../effects/horizonHaze';
 import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
 
 export interface PostFx {
+  /** The finished picture. Nothing draws to the canvas any more — this goes to
+   * core/compose.ts, which puts it where the layout says the picture is. */
+  outputTexture: () => THREE.Texture;
+  /**
+   * Measurement mode renders straight to the canvas instead, skipping
+   * core/compose.ts entirely.
+   *
+   * Not an optimisation — an exactness guarantee. Going through the compose
+   * blit costs a texture sample, and sampling a texture at what should be
+   * exactly its own texel centres still moved 0.03% of the frame's channels by
+   * one level. That is invisible and it is also the end of "the noon frame is
+   * byte-identical", which is the check that has caught three real regressions
+   * in this project. The measure loop keeps the original path.
+   */
+  setRenderToScreen: (enabled: boolean) => void;
   setSize: (width: number, height: number) => void;
   /** Apply the hour to everything in the post chain that was authored for
    * midday: the painted plate, and the horizon haze band. */
@@ -36,6 +51,10 @@ export interface PostFx {
  * Running the old grade on top of that double-grades them. */
 export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): PostFx {
   const composer = new EffectComposer(renderer);
+  // The last pass leaves its result in the composer's own buffer instead of on
+  // the canvas: the canvas is the whole page now and the picture is only one
+  // band of it (core/compose.ts).
+  composer.renderToScreen = false;
   composer.addPass(new RenderPass(scene, camera));
 
   // Threshold raised 0.86 -> 7.0 and strength cut 0.45 -> 0.07. The cloud
@@ -164,5 +183,13 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     );
   };
 
-  return { setSize, setFrameRect, setDaylight, setRain, render: () => composer.render() };
+  return {
+    outputTexture: () => composer.readBuffer.texture,
+    setRenderToScreen: (enabled: boolean) => { composer.renderToScreen = enabled; },
+    setSize,
+    setFrameRect,
+    setDaylight,
+    setRain,
+    render: () => composer.render(),
+  };
 }

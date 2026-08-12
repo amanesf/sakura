@@ -10,17 +10,13 @@
     <title>終わりを知らない、あの夏の境界線</title>
   </head>
   <body>
-    <!-- The page's own light. `.ambience` is the graded field the picture sits
-         in, plus the glow it spills backwards into that field. It is a sibling
-         of the content rather than a background on <body> so measurement mode
-         (?fit=frame) can switch the whole thing off in one rule.
 
-         Deliberately *behind* the picture and never over it: the illustration
-         is composited last by effects/plateShader.ts and the cloud colours are
-         measured off the reference, so a decorative grade laid over the frame
-         would tint the painted girl and window and move every statistic the
-         measure loop depends on. -->
-    <div class="ambience" aria-hidden="true"></div>
+    <!-- The canvas covers the whole page and sits behind everything, so the
+         picture and the silhouette under it are drawn in one frame by the GPU
+         with nothing read back (core/compose.ts). `.stage` below is now only a
+         spacer: it reserves the band and tells the compose pass where to put
+         the picture. -->
+    <div id="app" aria-hidden="true"></div>
 
     <header class="title">
       <h1 class="title__main">終わりを知らない、あの夏の境界線</h1>
@@ -28,16 +24,10 @@
       <p class="title__sub">The Boundary of That Endless Summer</p>
     </header>
 
-    <div class="stage">
-      <div id="app"></div>
-    </div>
+    <div class="stage"></div>
 
     <footer class="console"></footer>
 
-    <!-- The same sky as a flat line drawing (ui/outlinePanel.ts). Fills the
-         lower half of the page, which was deliberate darkness and is now the
-         diagrammatic half of a two-reading composition. -->
-    <section class="outline" aria-hidden="true"></section>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
