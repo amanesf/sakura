@@ -77,16 +77,41 @@ const RAMP_HDR = new Float32Array([
 
 export const CLOUD_RAMP_SIZE = 32;
 
-/** RGBA float texture, 32x1, for lookup by the shading term s in [0,1]. */
+/**
+ * RGBA half-float texture, 32x1, for lookup by the shading term s in [0,1].
+ *
+ * Half float, NOT 32-bit float, and this is a correctness requirement rather
+ * than a memory saving.
+ *
+ * This was FloatType with LinearFilter, and on a real phone it turned the
+ * clouds black. In WebGL2 an RGBA32F texture is *not filterable* in core: a
+ * LINEAR sampler on one requires the optional OES_texture_float_linear
+ * extension, and where that extension is missing the texture is incomplete and
+ * every texture2D() on it returns (0,0,0,1). SwiftShader — which is what
+ * scripts/capture.js renders with — implements the extension, so every capture
+ * ever taken of this project looked correct while Android showed solid black
+ * cloud. Nothing in the measure loop could have caught it.
+ *
+ * The symptom was diagnostic once seen: the black masses kept *white crowns
+ * and pale distant cloud*, because those two are the only paths in
+ * cloudShader.ts that do not come from this texture — the highlight boost
+ * mixes toward the uWhiteHDR uniform and aerial perspective mixes toward the
+ * uHazeColor uniform.
+ *
+ * RGBA16F is filterable in core WebGL2 with no extension, so this cannot
+ * happen again. The ramp's largest entry is 8.157, far inside half float's
+ * range, and its precision there (~0.008) is negligible against a table whose
+ * top step spans 3.48 -> 7.85.
+ */
 export function createCloudRampTexture(): THREE.DataTexture {
-  const data = new Float32Array(CLOUD_RAMP_SIZE * 4);
+  const data = new Uint16Array(CLOUD_RAMP_SIZE * 4);
   for (let i = 0; i < CLOUD_RAMP_SIZE; i++) {
-    data[i * 4 + 0] = RAMP_HDR[i * 3 + 0];
-    data[i * 4 + 1] = RAMP_HDR[i * 3 + 1];
-    data[i * 4 + 2] = RAMP_HDR[i * 3 + 2];
-    data[i * 4 + 3] = 1;
+    data[i * 4 + 0] = THREE.DataUtils.toHalfFloat(RAMP_HDR[i * 3 + 0]);
+    data[i * 4 + 1] = THREE.DataUtils.toHalfFloat(RAMP_HDR[i * 3 + 1]);
+    data[i * 4 + 2] = THREE.DataUtils.toHalfFloat(RAMP_HDR[i * 3 + 2]);
+    data[i * 4 + 3] = THREE.DataUtils.toHalfFloat(1);
   }
-  const tex = new THREE.DataTexture(data, CLOUD_RAMP_SIZE, 1, THREE.RGBAFormat, THREE.FloatType);
+  const tex = new THREE.DataTexture(data, CLOUD_RAMP_SIZE, 1, THREE.RGBAFormat, THREE.HalfFloatType);
   // Linear filtering across the ramp is what makes the tiers read as blended
   // plateaus ("にじむ") rather than hard cel bands.
   tex.minFilter = THREE.LinearFilter;

@@ -194,6 +194,28 @@
 **下3つは鵜呑みにしないこと。** クロップが揃っていない（面積 31830 対 49269）。
 塔だけを同じように切り出して測り直すのが §3 の最初の仕事。
 
+## 2.6 実機だけ雲が真っ黒だった件（FloatType の罠）
+
+ユーザーの実機スクリーンショット（amanesf.github.io/sakura/）で、中央の雲が
+**白い縁を残したまま真っ黒**になっていた。ヘッドレスのキャプチャでは一切
+再現しない。
+
+原因は `cloudRamp.ts` が色ランプを **`FloatType`（RGBA32F）＋ `LinearFilter`**
+の DataTexture で作っていたこと。WebGL2 のコアでは RGBA32F は filterable では
+なく、線形サンプラを使うには `OES_texture_float_linear` が要る。この拡張が
+無い端末ではテクスチャが incomplete 扱いになり、`texture2D()` が
+**(0,0,0,1)＝黒**を返す。SwiftShader は拡張を実装しているので、
+**このプロジェクトの全キャプチャは正しく見えていた**。計測ループでは原理的に
+捕まえられない種類のバグ。
+
+症状の形が診断そのものだった: 黒い塊が**白い冠と淡い遠景の雲を保っていた**。
+`cloudShader.ts` でこのテクスチャを通らない経路はその2つだけ——ハイライトは
+`uWhiteHDR` ユニフォームへ、空気遠近は `uHazeColor` ユニフォームへ mix する。
+
+修正は `HalfFloatType`（RGBA16F）。WebGL2 のコアで拡張なしに filterable なので
+再発しない。ランプの最大値 8.157 は half float の範囲に十分収まり、往復誤差は
+最大 2.6e-3。
+
 ### 方針（ユーザー指示）
 
 **ポップコーンを完全になくすのが目的ではない。** 雲が丸い塊の集まりであること
@@ -245,6 +267,13 @@ node scripts/darkspots.js /tmp/shot.png
 - **キャプチャ中に `app/src` を編集しない。** vite dev server 経由なので HMR で
   結果が混ざる。バックグラウンド実行して
   `until [ -f /tmp/shot.png ]; do sleep 15; done` で待つ。
+- **キャプチャは SwiftShader（CPU）で、実機の GPU とは能力が違う。**
+  実際にこれで実機だけ雲が真っ黒になるバグを見逃した（§2.6）。
+  **拡張機能に依存する機能を使わないこと。** 特にテクスチャのフィルタリング:
+  WebGL2 のコアで線形補間できるのは RGBA16F までで、**RGBA32F は
+  `OES_texture_float_linear` が要る**。SwiftShader は持っていて Android は
+  持っていないことがあり、その場合サンプラは黒(0,0,0,1)を返す。
+  **見た目の最終確認は実機のスクリーンショットでやってもらうこと。**
 - **`capture.js` はリポジトリ直下から実行する。**
   既定は 1408x768 ＋ `fit=frame`（計測用）。実機の形を見たいときは
   `CAPTURE_W=448 CAPTURE_H=998 node scripts/capture.js /tmp/p.png 0 fit=page`。
