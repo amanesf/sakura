@@ -119,6 +119,11 @@ function convectiveShape(rand: () => number, weather: number, sheared: boolean):
   // How coarse this particular cloud's lobes are. 0.25 was the single fitted
   // value; it stays the centre of the range.
   shape.grainCap = 0.19 + rand() * 0.13;
+  // The core ceiling is set as a multiple of the rim's, so a cloud that is
+  // fine-grained at its edge is fine-grained throughout and a coarse one is
+  // coarse throughout — the hierarchy varies per cloud, rather than every
+  // cloud having the same big-core/small-rim ratio.
+  shape.grainCapCore = shape.grainCap * (2.0 + rand() * 1.2);
   shape.satellites = 1.6 + rand() * 1.6;
   // A cloud in unstable, moist air boils harder than one in a settled sky.
   shape.boil = (0.07 + rand() * 0.09) * THREE.MathUtils.lerp(0.75, 1.25, weather);
@@ -276,6 +281,8 @@ const TIERS: TierSpec[] = [
       // cells of similar size, which is exactly the regularity that reads as
       // "mackerel sky" rather than as cumulus.
       shape.grainCap = 0.12 + rand() * 0.06;
+      // Altocumulus really is made of same-sized cells, so barely any hierarchy.
+      shape.grainCapCore = shape.grainCap * (1.3 + rand() * 0.4);
       shape.satellites = 0.8 + rand() * 0.8;
       shape.boil = 0.03 + rand() * 0.03;
       shape.boilPeriod = 320 + rand() * 260;
@@ -320,6 +327,8 @@ const TIERS: TierSpec[] = [
       shape.puffStretch.set(2.2 + rand() * 1.4, 0.15 + rand() * 0.12, 0.7 + rand() * 0.3);
       // Coarse relative to the streak: few long fibres, not many small grains.
       shape.grainCap = 0.4 + rand() * 0.25;
+      // A fibre has no interior to fill.
+      shape.grainCapCore = shape.grainCap;
       shape.satellites = 0.4 + rand() * 0.7;
       // Ice cloud does not convect — it is sheared and it falls. Practically
       // no boil, and what there is happens slowly.

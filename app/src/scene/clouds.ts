@@ -63,8 +63,13 @@ export interface ClusterShape {
    * fibrous high cloud is made out of the same scatter code as a cumulus:
    * stretch the lobes far along the wind and squash them flat. */
   puffStretch: THREE.Vector3;
-  /** Ceiling on a single puff's size as a fraction of its level's radius. */
+  /** Ceiling on a single puff's size as a fraction of its level's radius, at
+   * the *rim* of the mass — the lobes that make the silhouette. */
   grainCap: number;
+  /** The same ceiling at the *core*. Larger, so the inside of the cloud is
+   * built from big lobes that overlap into solid mass while the outside stays
+   * finely scalloped. The gap between the two is the size hierarchy. */
+  grainCapCore: number;
   /** Mean number of satellite lobes riding each main puff. */
   satellites: number;
   /** Convective boil: how much of its own size a lobe swells and shrinks by
@@ -80,6 +85,7 @@ export function defaultClusterShape(): ClusterShape {
     lean: new THREE.Vector2(0, 0),
     puffStretch: new THREE.Vector3(1, 1, 1),
     grainCap: 0.25,
+    grainCapCore: 0.55,
     satellites: 2.3,
     boil: 0.1,
     boilPeriod: 210,
@@ -231,7 +237,32 @@ function buildPuffCluster(
       // radius against the reference's 35px, and a bump on the outline *is* a
       // puff seen edge-on, so the only way to shrink one is to shrink the
       // other.
-      const puffScale = Math.min(puffScaleRaw, radius * shape.grainCap);
+      // ...but the cap is not uniform across the mass any more, and that is
+      // the point.
+      //
+      // A single cap applied everywhere is what destroys the size hierarchy:
+      // whatever `grain` rolls, every lobe that reaches the ceiling comes out
+      // at exactly the same size, so the cloud ends up built from one size of
+      // ball. That is both halves of the complaint at once. Same-size balls
+      // packed together read as popcorn, and — because the gaps between equal
+      // spheres are also all the same and none of them is plugged by anything
+      // bigger — the sky shows through the middle of the mass. Measured, 0.2%
+      // of cloud pixels sat 55-97 luminance below the cloud around them, and
+      // sampling one gave rgb(99,174,220) against a neighbouring lobe at pure
+      // white: a hole to the sky reading as a black blotch.
+      //
+      // A real cumulus is not uniform in this way. Its outside is scalloped
+      // into small lobes, which is what the earlier 0.25 cap was fitted to
+      // (the silhouette's bumps measured 41px mean radius against the
+      // reference's 35px), while its inside is solid — you do not see through
+      // the body of a cumulus. So the ceiling now depends on where the lobe
+      // sits: generous in the core, tight at the rim. The interior gets lobes
+      // big enough to plug each other's gaps, the silhouette keeps its fine
+      // scalloping, and the range between them *is* the size hierarchy that
+      // was missing.
+      const rim = THREE.MathUtils.smoothstep(dist, 0.35, 0.95);
+      const cap = radius * THREE.MathUtils.lerp(shape.grainCapCore, shape.grainCap, rim);
+      const puffScale = Math.min(puffScaleRaw, cap);
       // Guarantee vertical reach across at least ~70% of a level step, and
       // scatter within a wider vertical band (was radius*0.18, tiny compared
       // to levelSpacing once profile-shrunk) — puffs from adjacent levels now
@@ -480,7 +511,29 @@ export function createCloudCluster(
       // slow roll of air actually going up through it.
       const lift = shape.boil * n.scale * 0.35 * Math.sin(cycle * 0.5 + n.boilPhase);
 
-      p.set(n.base.x + windOffset.x, n.base.y + lift, n.base.z + windOffset.y);
+      // `bulk` is a *similarity* transform on the cluster: positions scale
+      // with it as well as sizes, so the whole mass grows and shrinks while
+      // staying the same shape.
+      //
+      // Scaling only the sizes — which is what this did at first — pulls the
+      // lobes apart as the cloud dissolves, and the gaps that opens go all the
+      // way through to the sky. Measured on the frame this produced, 0.2% of
+      // cloud pixels sat 55-97 luminance below the cloud around them, and
+      // sampling one gave rgb(99,174,220) with a neighbouring lobe at pure
+      // white: sky seen through a hole in the middle of a cloud, reading as a
+      // black blotch. Under a similarity transform the overlap between any two
+      // lobes is invariant, so no bulk value can open a gap that was not there
+      // at full size — and the per-instance `burial` baked in buildPuffCluster,
+      // which was computed from the full-size geometry, stays correct too.
+      //
+      // Scaled about the cluster's *base*, not its centre: a cloud's base is
+      // its condensation level and does not move, so a shrinking cloud settles
+      // downward from the top rather than rising off its own base.
+      p.set(
+        centerXZ.x + (n.base.x - centerXZ.x) * bulk + windOffset.x,
+        baseAlt + (n.base.y - baseAlt) * bulk + lift,
+        centerXZ.y + (n.base.z - centerXZ.y) * bulk + windOffset.y,
+      );
       q.setFromAxisAngle(up, n.rotationY);
 
       const coreScale = n.scale * bulk * breathe * Math.max(growthVisibility, 0.0001);

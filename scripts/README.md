@@ -125,3 +125,24 @@ with those to regenerate them (see agent-workflow-policy.md §1.5 and
 art-source/STATUS.md for the full pipeline: crop reference → generate on a
 pure-blue background → `art-source/canopy-clusters/chromakey.js` to matte →
 resize into `app/public/textures/`).
+
+# scripts/darkspots.js
+
+Finds sky showing through the *inside* of a cloud mass — the "異常に黒い雲"
+complaint. It uses `app/public/plate.webp`'s alpha as the mask for "this pixel
+is rendered sky", so the window frames, the girl and the town cannot be
+mistaken for dark cloud.
+
+It reports two things, and only the second one has ever fired on this scene:
+
+- **darker than the local clear sky.** Nothing here should be — the sky is the
+  darkest surface in the frame and cloud only adds light in front of it. This
+  also catches the ramp-bottom-blue artifact cloudShader.ts documents, which a
+  cloud/sky split by saturation would file under "sky".
+- **more than 55 below the local cloud level.** The relative test, and the one
+  that matters: a lobe at luminance 165 among neighbours at 250 reads as a hole
+  even though 165 is a legal shadow value.
+
+The clear-sky reference is a coarse grid with holes diffused in, not a per-row
+median — the sky varies with azimuth as well as elevation, and a per-row
+reference flagged a whole corner of ordinary blue sky (3% of the frame).
