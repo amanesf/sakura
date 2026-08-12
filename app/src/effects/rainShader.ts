@@ -221,8 +221,11 @@ export const RainShader = {
       float mid = sheet(vUv, 35.0, 0.40, 2.7, mix(0.26, 0.55, heavy), mix(0.030, 0.042, heavy), 7.0);
       float near = sheet(vUv, 16.0, 0.55, 2.6, mix(0.0, 0.45, heavy), mix(0.022, 0.034, heavy), 23.0);
 
-      float streaks = mist * 0.28 + mid * mix(0.45, 0.75, heavy) + near * heavy;
-      streaks *= smoothstep(0.03, 0.35, rain);
+      // The bottom of the slider is a drizzle you can barely see: the streaks
+      // fade in over the first third of it rather than appearing at full
+      // strength the moment the slider leaves zero. Applied to the three sheets
+      // together, below, so they stay in proportion to each other as it ramps.
+      float visible = smoothstep(0.03, 0.35, rain);
 
       // A raindrop is a lens, not a mark.
       //

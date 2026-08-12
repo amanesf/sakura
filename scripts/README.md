@@ -198,6 +198,33 @@ through the post chain under SwiftShader — so the two levers that matter are:
 `capture.js` is still the right tool for a single frame or for anything that
 needs the cold-start path.
 
+# scripts/glslcheck.js — do the shaders actually compile?
+
+```sh
+node scripts/glslcheck.js                    # everything under app/src
+node scripts/glslcheck.js effects/rainShader.ts
+```
+
+Shaders live in template literals, so **`tsc` and `vite build` both pass on a
+fragment shader that cannot compile at all**, and a post pass whose program
+fails to link does not fail quietly — it fills the frame with garbage. That is
+how "雨にすると真っ白になる" happened: a rewrite split the rain's three sheets
+into separate mixes and left behind one reference to a variable that no longer
+existed, so the rain pass never compiled; because `core/postFx.ts` only enables
+that pass above rain 0, the frame was perfect until the slider left zero.
+
+Ten seconds, against twenty minutes for the capture that would otherwise be the
+first thing to notice. Run it after touching any shader, and before pushing.
+
+Two kinds of entry are not a real failure:
+
+- Shaders assembled with `${...}` interpolation are skipped — they are not
+  valid GLSL as written. The standalone post passes, which is where this bug
+  class bites, have none.
+- Anything three.js injects (`projectionMatrix`, `uv`, `instanceMatrix`, …) is
+  declared by the script's prelude. If a shader fails on an undeclared built-in
+  the prelude is missing one — add it there rather than to the shader.
+
 # scripts/duskref.js — measuring an evening or rain reference
 
 ```sh
