@@ -183,6 +183,10 @@ const initial = {
   rain: numeric('rain'),
   hour: numeric('hour'),
   speed: numeric('speed'),
+  // `?fps=30` / `?fps=60`. Unlike the others this one is also remembered
+  // between visits — see ui/controls.ts — and the URL wins over what was
+  // remembered, so a link can still name the frame rate it wants.
+  fps: numeric('fps'),
 };
 
 const cloudField = createCloudField(scene, materials, CLOUD_LIGHT_DIR, initial.cloud ?? 0.62);
@@ -286,8 +290,43 @@ let simTime = frozenTime ?? Math.random() * 200000;
 let rainTime = frozenTime ?? 0;
 const clock = new THREE.Clock();
 
-function renderLoop() {
+// When the next frame is due, for the frame rate cap below.
+let nextDraw = 0;
+
+function renderLoop(now: number) {
   requestAnimationFrame(renderLoop);
+
+  // The frame rate cap (ui/controls.ts). Skipping happens *before* the clock is
+  // read, which is the whole trick: THREE.Clock only advances when it is asked
+  // to, so a skipped tick folds into the next frame's dt and the sky drifts and
+  // the rain falls at exactly the same rate at 30 as at 60. Capping the frame
+  // rate slows the drawing down, never the weather.
+  //
+  // A due *time* carried forward, rather than "has an interval passed since the
+  // last draw". The naive version cannot hit its target on any display, because
+  // rAF only offers ticks at the refresh interval and the elapsed time is
+  // almost never exactly the budget: measured against synthetic tick trains,
+  // "30" came out at 24.6fps on a 60Hz display and "60" at 43.6fps, and adding
+  // slack to fix those two left a 144Hz display at 48fps. Advancing the due
+  // time by exactly one interval lets the error cancel instead of accumulating,
+  // and lands on 30.0 and 60.0 at 60, 90, 120 and 144Hz alike.
+  //
+  // The resync is what stops that from running away when a frame costs more
+  // than its budget: without it the due time falls permanently behind and every
+  // tick draws, which is the one case where a frame rate cap must not add work.
+  //
+  // Never in measurement mode: scripts/capture.js counts rAF ticks to know when
+  // the scene has settled, and a skipped tick is not a rendered frame. The cap
+  // cannot change what a frame contains — simTime is frozen under `?t=` — but
+  // it could change how many warmup frames the harness actually got, and the
+  // measure loop is not the place to introduce that question.
+  if (!fitFrame) {
+    if (now < nextDraw) return;
+    const interval = 1000 / controls.frameRate();
+    nextDraw += interval;
+    if (nextDraw < now) nextDraw = now + interval;
+  }
+
   const dt = clock.getDelta();
   if (frozenTime === null) {
     simTime += dt * controls.timeScale();
@@ -342,4 +381,8 @@ function renderLoop() {
   },
 };
 
-renderLoop();
+// rAF supplies the timestamp on every subsequent call; the first one is made by
+// hand, so it gets the same clock's reading rather than a bare 0 — which would
+// otherwise sit a whole page-lifetime behind performance.now() and make the cap
+// pass trivially on the first frame.
+renderLoop(performance.now());

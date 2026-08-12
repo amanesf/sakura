@@ -1,7 +1,8 @@
 import { CLOCK_END_HOUR, CLOCK_START_HOUR, formatClock } from '../core/daylight';
 
 /**
- * The console: four sliders, in the order the sky is built up.
+ * The console: four sliders in the order the sky is built up, then the frame
+ * rate pair.
  *
  * Built for a phone held upright. The controls are not floated over the picture
  * — in the portrait layout the picture is a band across the upper part of the
@@ -22,6 +23,8 @@ export interface Controls {
   rainAmount: () => number;
   /** Clock hour, 12.0 .. 19.0. */
   hour: () => number;
+  /** Frames per second the render loop is allowed to draw at, 30 or 60. */
+  frameRate: () => number;
   /** Move a slider from code, as if the user had. Used by the capture harness
    * (scripts/shoot.js) to retarget the scene without reloading the page. */
   setValue: (key: string, value: number) => void;
@@ -106,6 +109,44 @@ const SLIDERS: SliderSpec[] = [
   },
 ];
 
+/**
+ * The frame rate cap, as a pair of buttons rather than a fifth slider.
+ *
+ * 60 by default, which is what the loop did before this existed. 30 is there
+ * because the picture is not cheap and cannot be made cheaper without changing
+ * what it looks like: the render buffer is pinned to the reference frame's
+ * 1408x768 on every device (core/main.ts explains why that is a correctness
+ * requirement, not a performance choice) and the post chain behind it runs
+ * bloom, an anisotropic Kuwahara and a macro-contrast pass over all of it. On a
+ * phone that can be more than 16ms of work, and a loop that asks for 60 and
+ * misses lands on an uneven 40-50 with visible hitching. Asking for 30 gives
+ * every frame twice the budget, which for a scene of drifting cloud reads as
+ * *smoother* than a dropped 60 even though it is half the frames.
+ *
+ * Not a quality setting: both give exactly the same picture, so a capture is
+ * unaffected either way and the measure loop does not care which is selected.
+ *
+ * A discrete choice with two values wants two buttons. Putting it on a slider
+ * would have implied the values between them mean something, and 43fps does
+ * not.
+ */
+const FRAME_RATES = [30, 60] as const;
+const DEFAULT_FRAME_RATE = 60;
+/** Where the choice is remembered. A preference someone sets because their
+ * phone struggles is not one they should have to set again every visit. */
+const FRAME_RATE_KEY = 'sakura.fps';
+
+function storedFrameRate(): number | undefined {
+  try {
+    const raw = Number(localStorage.getItem(FRAME_RATE_KEY));
+    return (FRAME_RATES as readonly number[]).includes(raw) ? raw : undefined;
+  } catch {
+    // Private mode, or storage disabled. The app has no business failing to
+    // start over a remembered preference.
+    return undefined;
+  }
+}
+
 export function createControls(initial: Partial<Record<string, number>> = {}): Controls {
   const host = document.querySelector('.console') ?? document.body;
   const values = new Map<string, number>();
@@ -155,6 +196,54 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
     sync();
   }
 
+  // The frame rate row. Same three-column shape as a slider so the console
+  // still reads as one instrument: label, then the buttons sitting where the
+  // sliders' readouts sit.
+  const fpsRow = document.createElement('div');
+  fpsRow.className = 'slider';
+
+  const fpsLabel = document.createElement('span');
+  fpsLabel.className = 'slider__label';
+  fpsLabel.textContent = 'FPS';
+
+  const group = document.createElement('div');
+  group.className = 'segment';
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', 'フレームレート上限');
+
+  // The URL wins over what was remembered, which wins over the default — the
+  // same precedence the sliders give `?cloud=` and friends, so `?fps=30` names
+  // a frame rate the way `?rain=1` names a downpour.
+  const wanted = initial.fps ?? storedFrameRate() ?? DEFAULT_FRAME_RATE;
+  values.set('fps', (FRAME_RATES as readonly number[]).includes(wanted) ? wanted : DEFAULT_FRAME_RATE);
+
+  const buttons = FRAME_RATES.map((rate) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'segment__button';
+    button.textContent = String(rate);
+    button.addEventListener('click', () => select(rate));
+    group.appendChild(button);
+    return { rate, button };
+  });
+
+  function select(rate: number): void {
+    values.set('fps', rate);
+    for (const entry of buttons) {
+      entry.button.setAttribute('aria-pressed', String(entry.rate === rate));
+    }
+    try {
+      localStorage.setItem(FRAME_RATE_KEY, String(rate));
+    } catch {
+      // See storedFrameRate: not being able to remember it is not a reason to
+      // refuse to apply it.
+    }
+  }
+  select(values.get('fps') ?? DEFAULT_FRAME_RATE);
+
+  fpsRow.append(fpsLabel, group);
+  host.appendChild(fpsRow);
+
   const read = (key: string) => values.get(key) ?? 0;
   return {
     setValue: (key, value) => setters.get(key)?.(value),
@@ -162,5 +251,6 @@ export function createControls(initial: Partial<Record<string, number>> = {}): C
     cloudAmount: () => read('cloud'),
     rainAmount: () => read('rain'),
     hour: () => read('hour'),
+    frameRate: () => values.get('fps') ?? DEFAULT_FRAME_RATE,
   };
 }

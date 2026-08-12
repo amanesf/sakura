@@ -208,7 +208,8 @@ body {
 
 /* A thin lit line rather than a chunky slider — the same visual family as the
    title's glow, so the console reads as one instrument. Four of them now
-   (cloud, rain, time, speed), so the row has to stay quiet: a fixed-width
+   (cloud, rain, time, speed) plus the frame rate row below, so a row has to
+   stay quiet: a fixed-width
    label column and a fixed-width readout column keep the tracks aligned with
    each other, which is most of what makes a stack of sliders look built rather
    than assembled. */
@@ -295,6 +296,42 @@ body {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0 0 5px rgba(124, 198, 240, 0.18), 0 0 14px rgba(124, 198, 240, 0.8);
+}
+
+/* The frame rate pair (ui/controls.ts). It sits in a `.slider` row so it keeps
+   the console's three-column rhythm, and it is pushed to the right so the two
+   numbers land in the same column as the sliders' readouts — the console then
+   still reads as one instrument with one right edge, rather than as a stack of
+   sliders with a widget bolted underneath. */
+.segment {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.segment__button {
+  min-width: 3.4em;
+  padding: 6px 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: transparent;
+  font: 600 13px/1 ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  cursor: pointer;
+  /* The row is 34px tall for the sliders' sake (touch target); match it so the
+     console's spacing does not change when this row is added. */
+  height: 34px;
+  transition: color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+/* Selected. The same lit-line family as the slider thumb: an accent edge and a
+   soft glow rather than a filled chip, so the console stays drawn in light. */
+.segment__button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+  box-shadow: 0 0 0 3px rgba(124, 198, 240, 0.14), 0 0 14px rgba(124, 198, 240, 0.45);
 }
 
 /* --- Measurement mode -------------------------------------------------- */
