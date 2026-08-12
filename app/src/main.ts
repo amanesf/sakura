@@ -92,7 +92,14 @@ const CLOUD_BASE_ALT = 1.4;
 // core/camera.ts for how TOWER_CENTER was solved from the reference image's
 // measured screen position).
 const TOWER_CENTER = new THREE.Vector2(5.5, -16.0);
-const TOWER_TOP_ALT = 10.8;
+// The envelope top is not the visible top: the crown's own puffs have a radius
+// of their own and stick out above it. atan(10.8/16.92) = 32.6° matches the
+// reference's crown (y≈77 ≈ 33°) as an envelope, but the render's crown was
+// still clipped by the top of frame (34.9°) and the 33° band measured 21.7%
+// against the reference's 5.5% — handoff.md §1 recorded the same thing as
+// 「天辺が画面上端で切れている」. Backing the envelope off by the puff
+// overshoot (~1.5km at this radius) puts the visible crown at ≈33°.
+const TOWER_TOP_ALT = 9.6;
 // Angular width, not a size in km, is what the reference constrains. Distance
 // is composition-anchored and the top elevation atan(10.8/16.92) = 32.6°
 // already matches the reference's crown at y≈77 (≈33°), so the radius is the
@@ -267,11 +274,13 @@ for (const c of SMALL_CUMULUS) {
 // The far tier keeps the horizon band populated but is the only tier that
 // reaches it, which is what brings 0-4° back down toward the reference.
 const BANK_TIERS = [
-  // topHi lifted 6.2 → 7.4 (18.6° at 22km, was 15.7°) to close a measured gap
+  // tops lifted 4.6-6.2 → 6.0-9.0 (15.2-22.2° at 22km) to close a measured gap
   // at 20.1°, where the render sat at 13.5% against the reference's 25.0%:
   // that band fell between the tower's shoulder and the deck's top and had
-  // nothing in it at all.
-  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 5.2, topHi: 7.4, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
+  // nothing in it at all. The first lift (to 7.4 / 18.6°) only moved it to
+  // 14.7%, so the deck has to overlap the tower's band rather than stop just
+  // below it.
+  { count: 18, zNear: 17, zSpan: 7, baseAlt: 2.3, topLo: 6.0, topHi: 9.0, radLo: 3.0, radHi: 5.5, xStep: 5.0, wind: 0.55 },
   { count: 16, zNear: 30, zSpan: 11, baseAlt: 2.2, topLo: 5.0, topHi: 8.2, radLo: 4.0, radHi: 7.5, xStep: 6.0, wind: 0.4 },
   { count: 14, zNear: 55, zSpan: 21, baseAlt: 1.6, topLo: 3.2, topHi: 5.4, radLo: 5.0, radHi: 9.0, xStep: 8.0, wind: 0.25 },
 ];
