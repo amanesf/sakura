@@ -8,10 +8,14 @@ import { GradeShader } from '../effects/gradeShader';
 import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
 import { PlateShader } from '../effects/plateShader';
+import { HorizonHazeShader } from '../effects/horizonHaze';
+import { FRAME_HEIGHT, type FrameRect } from './frame';
 
 export interface PostFx {
   setSize: (width: number, height: number) => void;
-  setPlateRect: (rect: THREE.Vector4) => void;
+  /** The visible sub-rect of the reference's frame — drives both the plate's UVs
+   * and where the horizon haze band sits (core/frame.ts). */
+  setFrameRect: (rect: FrameRect) => void;
   render: () => void;
 }
 
@@ -70,6 +74,10 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const macroPass = new MacroContrastPass(window.innerWidth, window.innerHeight);
   composer.addPass(macroPass);
 
+  // Before the plate, so it works on the rendered sky only.
+  const horizonPass = new ShaderPass(HorizonHazeShader);
+  composer.addPass(horizonPass);
+
   // The foreground plate goes on last — see effects/plateShader.ts for why
   // nothing may run after it.
   const plateTexture = new THREE.TextureLoader().load('plate.webp');
@@ -91,11 +99,27 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     macroPass.setSize(width, height);
     bloomPass.setSize(width, height);
     gradePass.uniforms.uAspect.value = width / height;
+    horizonPass.uniforms.uTexel.value.set(1 / width, 1 / height);
   };
 
-  const setPlateRect = (rect: THREE.Vector4) => {
-    platePass.uniforms.uPlateRect.value.copy(rect);
+  // The painted sea horizon sits at y=593 of the 1408x768 frame (measured), and
+  // the haze band reaches about 100px above it.
+  const HORIZON_ROW = 593;
+  const HAZE_TOP_ROW = 470;
+
+  const setFrameRect = (rect: FrameRect) => {
+    platePass.uniforms.uPlateRect.value.set(
+      rect.x / 1408,
+      1 - (rect.y + rect.height) / FRAME_HEIGHT,
+      rect.width / 1408,
+      rect.height / FRAME_HEIGHT,
+    );
+    // Frame rows -> screen v, remembering v runs bottom-up.
+    horizonPass.uniforms.uHazeV.value.set(
+      1 - (HORIZON_ROW - rect.y) / rect.height,
+      1 - (HAZE_TOP_ROW - rect.y) / rect.height,
+    );
   };
 
-  return { setSize, setPlateRect, render: () => composer.render() };
+  return { setSize, setFrameRect, render: () => composer.render() };
 }
