@@ -9,6 +9,7 @@ import { AnisotropicKuwaharaPass } from '../effects/anisotropicKuwahara';
 import { MacroContrastPass } from '../effects/macroContrast';
 import { PlateShader } from '../effects/plateShader';
 import { RainShader } from '../effects/rainShader';
+import { NearRainShader } from '../effects/nearRain';
 import { relightForDay, type Daylight } from './daylight';
 import { HorizonHazeShader } from '../effects/horizonHaze';
 import { FRAME_WIDTH, FRAME_HEIGHT, type FrameRect } from './frame';
@@ -146,6 +147,14 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   const platePass = new ShaderPass(PlateShader);
   composer.addPass(platePass);
 
+  // ...and then the rain that is in front of the illustration, which exists only
+  // for the outdoor scenes. See effects/nearRain.ts for why this is allowed to
+  // run after the plate when nothing else is, and scene/scenes.ts's
+  // foregroundRain for which scenes get it.
+  const nearRainPass = new ShaderPass(NearRainShader);
+  nearRainPass.enabled = false;
+  composer.addPass(nearRainPass);
+
   const setSize = (width: number, height: number) => {
     composer.setSize(width, height);
     kuwaharaPass.setSize(width, height);
@@ -154,6 +163,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     gradePass.uniforms.uAspect.value = width / height;
     horizonPass.uniforms.uTexel.value.set(1 / width, 1 / height);
     rainPass.uniforms.uAspect.value = width / height;
+    nearRainPass.uniforms.uAspect.value = width / height;
   };
 
   // The haze band's midday colour, kept so the hour can be applied to it
@@ -162,10 +172,95 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     horizonPass.uniforms.uHazeColor.value.toArray(),
   );
 
+  /**
+   * The haze band's rain target, in display-space sRGB.
+   *
+   * The dry band is a pale luminous blue-white — aerosol lit by a midday sun,
+   * which is what makes the sea horizon dissolve into light. A rain horizon
+   * dissolves too, but into the opposite thing: a dark blue-grey murk with no
+   * light in it at all. Keeping the pale value and merely turning the strength
+   * up would have put a bright band along the bottom of a storm sky, which is
+   * where the eye then goes.
+   *
+   * Deliberately lighter than the murk should finally read, because
+   * effects/rainShader.ts runs *after* this and takes the whole frame down by
+   * its exposure cut: at full rain that is 0.32 in linear light, about 0.60 in
+   * display, which lands this near sRGB(76,100,118).
+   */
+  const rainHazeColor = new THREE.Color(126 / 255, 166 / 255, 196 / 255);
+  const DRY_HAZE_STRENGTH = horizonPass.uniforms.uHazeStrength.value as number;
+  const DRY_HAZE_BLUR = horizonPass.uniforms.uBlurPx.value as number;
+
+  // The last values each of the two axes asked for, because the haze band takes
+  // both and they arrive from different callers on different frames.
+  let hazeDay: Daylight | null = null;
+  let hazeRain = 0;
+
+  /**
+   * The horizon band, as a function of the hour *and* the weather.
+   *
+   * The rain half of this is the second half of taking the light out of the
+   * picture, and it is the half that carries distance. An exposure cut says the
+   * sun has gone; it says nothing about how far you can see, and in rain how far
+   * you can see is the first thing to change — a horizon visible for fifty
+   * kilometres on a clear day closes to two or three, so the sea horizon, the
+   * distant banks and the far cloud stop existing as separate things and become
+   * one soft wall. Until this existed the frame's most distant edge stayed as
+   * crisp in a downpour as at noon, which is why the storm read as a dark filter
+   * over a clear day rather than as bad visibility.
+   *
+   * Both the fade and the blur radius go up, because both are what visibility
+   * is: the colour converges on the airlight, and the object's edge is scattered
+   * out by the water between. The blur more than doubles, which sounds
+   * extravagant and is not — it is 8px on a 1408px frame, i.e. half a degree.
+   */
+  const applyHaze = () => {
+    if (!hazeDay) return;
+    const day = hazeDay;
+    const rain = Math.min(Math.max(hazeRain, 0), 1);
+    // Both ends of the blend take the hour first, so an evening downpour hazes
+    // toward an evening murk rather than toward a midday one.
+    const dry = relightForDay(baseHazeColor, day, 0.65);
+    if (rain <= 0) {
+      horizonPass.uniforms.uHazeColor.value.set(dry.r, dry.g, dry.b);
+      horizonPass.uniforms.uHazeStrength.value = DRY_HAZE_STRENGTH;
+      horizonPass.uniforms.uBlurPx.value = DRY_HAZE_BLUR;
+      return;
+    }
+    const wet = relightForDay(rainHazeColor, day, 0.65);
+    horizonPass.uniforms.uHazeColor.value.set(
+      THREE.MathUtils.lerp(dry.r, wet.r, rain),
+      THREE.MathUtils.lerp(dry.g, wet.g, rain),
+      THREE.MathUtils.lerp(dry.b, wet.b, rain),
+    );
+    horizonPass.uniforms.uHazeStrength.value = THREE.MathUtils.lerp(DRY_HAZE_STRENGTH, 0.97, rain);
+    horizonPass.uniforms.uBlurPx.value = THREE.MathUtils.lerp(DRY_HAZE_BLUR, 8.0, rain);
+  };
+
+  /**
+   * The ambient sky the foreground drops carry (effects/nearRain.ts's
+   * uSkyColor).
+   *
+   * The haze band's own colour is the right quantity — it is the airlight, i.e.
+   * exactly the light a drop two metres from the eye is sitting in, and it has
+   * already been relit for the hour and the weather by applyHaze. It only has to
+   * be taken down by the rain pass's exposure cut first, because the near-rain
+   * pass runs *after* that cut and the band's colour is stated before it.
+   */
+  const applyNearRainSky = () => {
+    const rain = Math.min(Math.max(hazeRain, 0), 1);
+    const exposure = rainPass.uniforms.uExposure.value as number;
+    // In display space, which is where both of these colours live.
+    const dim = THREE.MathUtils.lerp(1, Math.pow(exposure, 1 / 2.2), rain);
+    const haze = horizonPass.uniforms.uHazeColor.value as THREE.Vector3;
+    (nearRainPass.uniforms.uSkyColor.value as THREE.Vector3).copy(haze).multiplyScalar(dim);
+  };
+
   const setDaylight = (day: Daylight) => {
     const plate = day.plateTint;
     platePass.uniforms.uDayTint.value.set(plate.r, plate.g, plate.b);
 
+    hazeDay = day;
     // The band that fills the bottom of the sky was a fixed pale midday blue
     // applied at 0.72 strength, so it pinned the lower sky bright and blue at
     // every hour — measured, the 18:36 sky was still at luminance 173 near the
@@ -174,8 +269,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     // around, so it has to take the hour like everything else. Weighted toward
     // the lit illuminant because the low sky along a long horizon path is lit
     // mostly by the direct beam.
-    const haze = relightForDay(baseHazeColor, day, 0.65);
-    horizonPass.uniforms.uHazeColor.value.set(haze.r, haze.g, haze.b);
+    applyHaze();
   };
 
   const setRain = (amount: number, rainTime: number) => {
@@ -189,6 +283,17 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     // drift apart.
     const skyExposure = rainPass.uniforms.uExposure.value as number;
     platePass.uniforms.uRainExposure.value = 1 + (skyExposure - 1) * Math.min(Math.max(amount, 0), 1);
+
+    // Visibility closes with the rain — see applyHaze.
+    hazeRain = amount;
+    applyHaze();
+    applyNearRainSky();
+
+    // And the rain on this side of the picture, which only the outdoor scenes
+    // have (effects/nearRain.ts).
+    nearRainPass.uniforms.uRain.value = amount;
+    nearRainPass.uniforms.uRainTime.value = rainTime;
+    nearRainPass.enabled = amount > 0.001 && plateScene.foregroundRain > 0;
   };
 
   // Where the painted horizon is, per scene (scene/scenes.ts). Both of these
@@ -207,10 +312,16 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
       frameRect.height / FRAME_HEIGHT,
     );
     // Frame rows -> screen v, remembering v runs bottom-up.
+    const horizonV = 1 - (plateScene.horizonRow - frameRect.y) / frameRect.height;
     horizonPass.uniforms.uHazeV.value.set(
-      1 - (plateScene.horizonRow - frameRect.y) / frameRect.height,
+      horizonV,
       1 - (plateScene.hazeTopRow - frameRect.y) / frameRect.height,
     );
+    // The rain's depth axis is measured from the same line: see the rain pass's
+    // uHorizonV. The three scenes put it 155 frame rows apart, so a rain
+    // perspective hard-coded for one of them would be wrong for the other two.
+    rainPass.uniforms.uHorizonV.value = horizonV;
+    nearRainPass.uniforms.uNearRain.value = plateScene.foregroundRain;
   };
 
   const setFrameRect = (rect: FrameRect) => {

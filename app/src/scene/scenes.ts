@@ -45,6 +45,28 @@ export interface SceneDef {
    * 0.887, so this is 0.887 - 0.052.
    */
   cameraHorizonFraction: number;
+  /**
+   * How much rain falls *in front of* the illustration, 0-1
+   * (effects/nearRain.ts).
+   *
+   * The main rain pass runs before the plate, which confines it to the pixels
+   * the painting leaves transparent. For scene 1 that is exactly right: there
+   * is a window between the viewer and the weather, so rain has no business
+   * being on this side of it.
+   *
+   * For scenes 2 and 3 it is a structural falsehood. 軒下 and バス停 are both
+   * *outdoors* — the viewer is standing under a roof with no glass anywhere,
+   * and the near rain that should be crossing in front of the eaves, the
+   * guardrail and the bench is missing entirely. What that produced was a hard
+   * silhouette edge where every streak stopped dead at the painted geometry:
+   * the picture read as a sheet of rain slipped in behind a paper cut-out.
+   *
+   * Not 1.0 even outdoors, because the viewer is under cover: what crosses the
+   * foreground is what blows in past the roofline, not the full column. Scene 3
+   * is the more open of the two — a bus shelter's side is nearly all air, where
+   * the eaves of 軒下 reach further out.
+   */
+  foregroundRain: number;
 }
 
 export const SCENES: SceneDef[] = [
@@ -57,6 +79,9 @@ export const SCENES: SceneDef[] = [
     horizonRow: 593,
     hazeTopRow: 470,
     cameraHorizonFraction: 0.72,
+    // Behind glass. The one scene where "no rain in front of the plate" is the
+    // truth rather than a limitation.
+    foregroundRain: 0,
   },
   {
     key: '2',
@@ -68,6 +93,7 @@ export const SCENES: SceneDef[] = [
     horizonRow: 681,
     hazeTopRow: 558,
     cameraHorizonFraction: 0.835,
+    foregroundRain: 0.7,
   },
   {
     key: '3',
@@ -85,6 +111,7 @@ export const SCENES: SceneDef[] = [
     horizonRow: 748,
     hazeTopRow: 625,
     cameraHorizonFraction: 0.922,
+    foregroundRain: 0.9,
   },
 ];
 

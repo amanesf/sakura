@@ -236,9 +236,96 @@ const controls = createControls(initial, query.get('scene'), applyScene);
 // out of step with itself.
 let appliedCloud = -1;
 let appliedHour = Number.NaN;
+let appliedRain = -1;
+
+/**
+ * The cloud the rain brings with it.
+ *
+ * Until this existed the two sliders were independent, which allowed
+ * `cloud=0.2, rain=1.0`: a downpour out of four fair-weather cumulus with open
+ * blue between them. That is not a tuning fault, it is a missing causal link —
+ * rain falls out of cloud, so a sky that is raining is a sky that is at least
+ * mostly closed, and there is no setting of the cloud slider that should be
+ * able to say otherwise while the rain slider is up.
+ *
+ * A floor rather than an override: the cloud slider still chooses everything
+ * above it, so "raining under a completely closed deck" and "raining under a
+ * broken one" are both still reachable. Only the physically impossible corner is
+ * removed.
+ *
+ * The floor ramps in over the first tenth of the rain slider instead of
+ * appearing at the first touch, and lands directly on 0.72 — cloudField.ts's own
+ * overcast threshold, where the tiers stop making individual clouds and start
+ * making a ceiling — rising to 0.96 at a full downpour.
+ *
+ * 0.72 and not something gentler because there is no such thing as light rain
+ * out of a half-empty sky. Rain of any kind means a deck: the first version of
+ * this floor landed at 0.52 and measured 145 mean luminance at rain=0.5 against
+ * a dry 172, which is to say the picture at half rain was a summer afternoon
+ * with a few streaks on it. The exposure cut cannot fix that on its own, because
+ * what makes a rainy sky rainy is not that the sun is dimmer, it is that there
+ * is no blue left between the clouds.
+ *
+ * Exactly zero at rain=0, which is what keeps the dry frame the one every
+ * statistic in this project was measured against.
+ */
+function rainCloudFloor(rain: number): number {
+  if (rain <= 0) return 0;
+  return THREE.MathUtils.smoothstep(rain, 0.0, 0.10) * (0.72 + 0.24 * Math.min(rain, 1));
+}
+
+/**
+ * What the rain does to how far you can see, as seen by the *clouds*.
+ *
+ * The rain pass darkens the frame and washes it toward a rain-sky colour by
+ * screen height, and neither of those is distance: the near tower and the bank
+ * forty kilometres behind it were washed by exactly the same amount, so the
+ * depth ordering the cloud shader's aerial perspective is built to produce
+ * survived the storm completely intact. A storm's most conspicuous property is
+ * that it destroys that ordering — visibility falls from tens of kilometres to
+ * two or three, and the far bank stops being a separate object.
+ *
+ * The cloud material already has the right machinery for this: it fogs each
+ * fragment by its own distance from the camera (scene/cloudShader.ts's haze
+ * term). So the rain does not need a new mechanism, only to move that one's
+ * three constants — start the fog nearer, thicken it, and retarget it from the
+ * pale luminous airlight of a clear midday to the murk.
+ *
+ * The murk value is sRGB(96,150,186) put through scripts/hdr.js into the
+ * pre-tonemap linear HDR the cloud shader works in. It is lighter than the final
+ * picture wants because effects/rainShader.ts's exposure cut runs afterwards and
+ * takes it down about another 40%.
+ */
+const DRY_HAZE_START = materials.core.uniforms.uHazeStart.value as number;
+const DRY_HAZE_DENSITY = materials.core.uniforms.uHazeDensity.value as number;
+const DRY_HAZE_COLOR = (materials.core.uniforms.uHazeColor.value as THREE.Vector3).clone();
+const RAIN_HAZE_COLOR = new THREE.Vector3(0.0810, 0.2052, 0.3612);
+
+function applyRainVisibility(rain: number): void {
+  const t = THREE.MathUtils.clamp(rain, 0, 1);
+  materials.core.uniforms.uHazeStart.value = THREE.MathUtils.lerp(DRY_HAZE_START, 5.5, t);
+  materials.core.uniforms.uHazeDensity.value = THREE.MathUtils.lerp(DRY_HAZE_DENSITY, 0.150, t);
+  (materials.core.uniforms.uHazeColor.value as THREE.Vector3)
+    .copy(DRY_HAZE_COLOR)
+    .lerp(RAIN_HAZE_COLOR, t);
+  // And the deck's own base goes down with it: a raining cloud is not a thick
+  // cloud in less light, it is a thicker cloud (scene/cloudShader.ts's uRainDim).
+  materials.core.uniforms.uRainDim.value = THREE.MathUtils.lerp(1.0, 0.52, t);
+}
 
 function applyControls(rainTime: number): void {
-  const cloud = controls.cloudAmount();
+  const rain = controls.rainAmount();
+  if (rain !== appliedRain) {
+    appliedRain = rain;
+    applyRainVisibility(rain);
+  }
+
+  // The cloud the slider asks for, or the cloud the rain requires, whichever is
+  // more. Rounded to the slider's own step so that dragging the rain slider does
+  // not rebuild the entire cloud field on every intermediate value.
+  const cloud = Math.round(
+    Math.max(controls.cloudAmount(), rainCloudFloor(rain)) * 100,
+  ) / 100;
   if (cloud !== appliedCloud) {
     appliedCloud = cloud;
     cloudField.setCloudAmount(cloud);
@@ -269,7 +356,7 @@ function applyControls(rainTime: number): void {
     skyDusk = daylight.dusk;
   }
 
-  postFx.setRain(controls.rainAmount(), rainTime);
+  postFx.setRain(rain, rainTime);
 }
 
 // Simulated seconds. Every cluster's position, age and weather is a pure

@@ -75,6 +75,17 @@ export const RainShader = {
     uRainTime: { value: 0 },
     uAspect: { value: 1 },
     /**
+     * Screen v of the painted horizon, from the same per-scene measurement that
+     * hangs the horizon haze band (core/postFx.ts's applyFrame).
+     *
+     * Rain needs it because rain has depth and the frame's depth axis is the
+     * distance from this line. Everything the streaks do about perspective —
+     * how long they are, how tightly packed, which way they lean — is measured
+     * from here, so the three scenes get it right despite their horizons
+     * sitting 155 frame rows apart.
+     */
+    uHorizonV: { value: 0.23 },
+    /**
      * What the rain's aerial perspective washes toward, in display-space sRGB —
      * this pass runs after OutputPass, on tonemapped pixels.
      *
@@ -124,6 +135,7 @@ export const RainShader = {
     uniform float uRain;
     uniform float uRainTime;
     uniform float uAspect;
+    uniform float uHorizonV;
     uniform vec3 uRainColor;
     uniform vec3 uRainHigh;
     uniform vec3 uRainLow;
@@ -148,6 +160,102 @@ export const RainShader = {
     }
 
     /**
+     * Where this pixel sits on the frame's depth axis: 0 at the horizon, 1 for
+     * the near rain high in frame.
+     *
+     * The old pass had no such notion. Every streak in it was the same length,
+     * the same width and the same distance apart whether it was drawn a degree
+     * above the sea or straight overhead, which is a description of a texture
+     * pasted on the glass rather than of a volume of falling water. A volume of
+     * rain seen from inside it is the most strongly perspective-distorted thing
+     * in any weather photograph: the drops near the horizon are kilometres away
+     * and subtend almost nothing, so they crowd into a fine dense grain, while
+     * the ones overhead are tens of metres away and cross the whole frame.
+     *
+     * Not linear in v, because depth is not linear in v — it goes as roughly
+     * 1/(v - horizon) for a level rain volume. smoothstep over the first 0.62
+     * of the frame above the horizon is a cheap stand-in with the right shape:
+     * nearly all of the change happens in the band just above the horizon,
+     * which is exactly where nearly all of the distance is.
+     */
+    float perspAt(float v) {
+      return mix(0.16, 1.0, smoothstep(uHorizonV, uHorizonV + 0.62, v));
+    }
+
+    /**
+     * How hard it is raining *right now, right here* — the gust structure.
+     *
+     * uRain is a slider position, and until this existed the slider position was
+     * also the instantaneous intensity: the rain fell at precisely the same rate
+     * for as long as you watched it. That is the single most reliable tell that
+     * a rain effect is a shader rather than weather, and no amount of per-drop
+     * variation addresses it, because the thing that is constant is not any
+     * drop, it is the *field*.
+     *
+     * Real rain is gusty at two scales at once, and both are here:
+     *
+     *  - A slow global swell, tens of seconds long: the whole sky leans into it
+     *    and eases off. This is what makes the light breathe.
+     *  - A front crossing the frame, sampled in (x - ct): a band of harder rain
+     *    travelling with the wind, so the left of the picture gets it before the
+     *    right does. This is the one that reads as *weather passing through*
+     *    rather than as an intensity knob being turned.
+     *
+     * A pure function of uRainTime and x, so ?t= still pins it and
+     * scripts/capture.js still gets the same frame twice. The mean is held near
+     * 0.95 rather than 1.0 so that the top of the slider can still gust *up*:
+     * a squall that only ever subtracts reads as the effect faltering.
+     */
+    float gustAt(float x) {
+      float swell = vnoise2(vec2(uRainTime * 0.055, 3.7));
+      float front = vnoise2(vec2(x * 0.85 - uRainTime * 0.031, 11.0));
+      // The front is the larger of the two: it is the one carrying the
+      // structure, and the swell only modulates it.
+      return mix(0.60, 1.30, 0.42 * swell + 0.58 * front);
+    }
+
+    /**
+     * How much cloud is overhead of this pixel — read back off the picture
+     * itself, a few sample steps up the frame.
+     *
+     * Rain falls out of cloud bases. The curtains below were built from noise in
+     * screen space and hung wherever that noise happened to be strong, so they
+     * appeared under open blue as readily as under the deck, and drifted at a
+     * rate unrelated to the clouds they were supposedly falling from. That is
+     * the specific reason they read as smears on the picture rather than as
+     * shafts in the sky: a shaft whose top does not meet a cloud has no cause.
+     *
+     * This is deliberately not a mask rendered from the cloud field. The buffer
+     * at this point already *is* the sky with the clouds in it, and cloud is
+     * separable from sky in it by inspection: cloud is bright and weakly
+     * saturated, the sky behind it is deeper and strongly blue. Four taps up the
+     * column is a coarse instrument, but it is coarse in the right direction —
+     * a curtain is a kilometres-wide object and does not need to know which lobe
+     * it came from.
+     *
+     * It does over-report in the last few degrees above the horizon, where
+     * effects/horizonHaze.ts has already washed everything toward a pale band
+     * that measures as cloud. That is a real limitation and it is benign: the
+     * horizon is where distant rain belongs anyway.
+     */
+    // Cloud or sky, from one pixel: cloud is bright and weakly saturated, the
+    // sky behind it is deeper and strongly blue.
+    float cloudiness(vec3 c) {
+      float mx = max(max(c.r, c.g), c.b);
+      float mn = min(min(c.r, c.g), c.b);
+      float sat = (mx - mn) / max(mx, 1e-4);
+      return smoothstep(0.30, 0.62, mx) * smoothstep(0.58, 0.24, sat);
+    }
+
+    float cloudAbove(vec2 uv) {
+      float sum = 0.0;
+      for (int i = 1; i <= 4; i++) {
+        sum += cloudiness(texture2D(tDiffuse, vec2(uv.x, min(uv.y + float(i) * 0.05, 0.998))).rgb);
+      }
+      return sum * 0.25;
+    }
+
+    /**
      * Rain seen from a distance: 雨脚, the pale curtains that hang out of a
      * cloud base and drift with it.
      *
@@ -163,11 +271,34 @@ export const RainShader = {
      * than a drop does, because it is a shape rather than an object).
      */
     float curtain(vec2 uv) {
-      vec2 p = vec2(uv.x * 3.2, uv.y * 0.55 - uRainTime * 0.02);
+      // Drifts sideways as well as down now. A shaft hangs from a cloud and
+      // goes where the cloud goes, so it crosses the frame with the wind; the
+      // old version only slid downward, which is a waterfall, not weather.
+      float drift = uRainTime * 0.014;
+      vec2 p = vec2(uv.x * 3.2 - drift, uv.y * 0.55 - uRainTime * 0.02);
       float v = vnoise2(p) * 0.55 + vnoise2(p * 2.4 + 11.0) * 0.3 + vnoise2(p * 5.1 + 31.0) * 0.15;
       // Fine vertical striation riding on top, so a shaft has fall lines in it.
-      v += (vnoise2(vec2(uv.x * 46.0, uv.y * 2.2 - uRainTime * 0.05)) - 0.5) * 0.16;
+      v += (vnoise2(vec2(uv.x * 46.0 - drift * 14.0, uv.y * 2.2 - uRainTime * 0.05)) - 0.5) * 0.16;
       return v;
+    }
+
+    /**
+     * The showers as *cells* rather than as one continuous veil.
+     *
+     * Rain is not evenly spread across a sky even in a downpour — it comes in
+     * patches kilometres wide, so at any moment part of the view is under a
+     * heavy shaft and part of it is merely wet. Drawing one uniform veil across
+     * the whole frame is what made the far rain read as a filter layer: a filter
+     * is the only thing in nature that is equally strong everywhere.
+     *
+     * Very low frequency (about two cells across the frame) and drifting with
+     * the same wind as the curtains above, so a cell arrives, crosses and
+     * leaves. The floor is 0.35 rather than 0 because the gaps between showers
+     * in heavy rain are gaps in the *heaviness*, not in the rain.
+     */
+    float showerCell(vec2 uv) {
+      float n = vnoise2(vec2(uv.x * 1.9 - uRainTime * 0.024, uv.y * 0.8 + 5.0));
+      return mix(0.35, 1.35, n);
     }
 
     /**
@@ -193,19 +324,45 @@ export const RainShader = {
      */
     float sheet(vec2 uv, float columns, float speed, float streakLen, float density,
                 float width, float seed) {
+      // Where this row of the frame sits in depth. Everything below is scaled
+      // by it, which is what turns three flat sheets into a volume.
+      float persp = perspAt(uv.y);
+
       vec2 cell = vec2(columns, columns / (streakLen * uAspect));
       vec2 grid = uv * cell;
-      // Slant. Rain in any wind is not vertical, and matching the scene's
-      // left-to-right flow ties it to the clouds above it. Per-column, so the
-      // sheet is not one rigidly parallel comb.
+      // Slant, and where the slant comes from.
+      //
+      // Two terms. The first is the wind, matching the scene's left-to-right
+      // flow, jittered per column so the sheet is not one rigidly parallel comb
+      // — that is what the old version had, and all of it.
+      //
+      // The second is perspective. Rain falling in parallel lines does not
+      // *look* parallel: like any parallel bundle it converges on a vanishing
+      // point, which for near-vertical fall in a wind sits a little off centre
+      // below the horizon. So a streak on the left of the frame leans right and
+      // one on the right leans left, by an amount that grows as the streak nears
+      // the vanishing point. Without this the rain reads as a comb held up in
+      // front of the picture, because a comb is exactly what a bundle of lines
+      // at one fixed angle is.
+      //
+      // The shear is in cell space, not screen space — grid.y is in cell rows —
+      // which is the space the wind constant above was already tuned in.
       float column0 = floor(uv.x * columns);
-      grid.x += grid.y * (0.08 + hash12(vec2(column0, seed + 3.0)) * 0.09);
+      float wind = 0.08 + hash12(vec2(column0, seed + 3.0)) * 0.09;
+      // The vanishing point sits downwind of centre by the mean lean.
+      float radial = clamp((uv.x - 0.60) / max(uv.y - uHorizonV + 0.28, 0.12), -1.5, 1.5);
+      grid.x += grid.y * (wind + radial * 0.16);
       float column = floor(grid.x);
       float jitter = hash12(vec2(column, seed));
       grid.y += uRainTime * speed * (0.75 + jitter * 0.5);
       float row = floor(grid.y);
       float id = hash12(vec2(column, row + seed * 37.0));
-      if (id > density) return 0.0;
+      // Density rises toward the horizon. The volume is the same everywhere;
+      // what changes is how much of it one pixel is looking through, and near
+      // the horizon that is kilometres of it. Capped below 1 so the far band
+      // stays rain rather than becoming a solid fill — past about 0.9 the cells
+      // are all occupied and the pattern's own grid starts to show.
+      if (id > min(density / mix(0.42, 1.0, persp), 0.9)) return 0.0;
 
       // Per-drop character.
       float r1 = fract(id * 17.0);
@@ -214,12 +371,15 @@ export const RainShader = {
       // Width varies *downward only*: the widths were already at the top of
       // what reads as rain rather than as a smear, so the range runs from
       // four tenths of the sheet's width up to exactly it, never past.
-      float w = width * (0.4 + r2 * 0.6);
+      // Both scaled by depth as well as rolled per drop: a drop three
+      // kilometres out is thinner and shorter on the film than the same drop
+      // thirty metres away, and by a large factor rather than a subtle one.
+      float w = width * (0.4 + r2 * 0.6) * mix(0.5, 1.0, persp);
       // Length varies far more than it did (was 0.35-0.80 of a cell). Drops
       // are at every distance and falling at every angle to the view, so their
       // streaks are at every length; a narrow range of lengths is one of the
       // things that made the first version read as ruled hatching.
-      float len = 0.22 + r3 * 0.63;
+      float len = (0.22 + r3 * 0.63) * mix(0.30, 1.0, persp);
 
       vec2 f = fract(grid);
       float x = abs(f.x - (0.2 + 0.6 * r1));
@@ -268,9 +428,24 @@ export const RainShader = {
      * Then a little contrast about the darkened mid, because the exposure cut
      * compresses the display-space spread along with everything else.
      */
-    vec3 weather(vec3 c, float rain, float heavy, float v) {
+    vec3 weather(vec3 c, float rain, float heavy, float v, float open) {
       vec3 lit = toDisplay(toLinear(c) * mix(1.0, uExposure, rain));
-      float veil = rain * (0.16 + 0.14 * heavy);
+      // The veil is aerial perspective, so it belongs to *distance* — and the
+      // one depth cue this pass can read straight out of the picture is whether
+      // it is looking at a cloud or through a gap between them. A gap is the
+      // longest sight line in the frame by a wide margin: the cloud base is a
+      // kilometre or two up, and the sky behind it is not anywhere.
+      //
+      // Applying one veil to both was visible and specific. At rain=0.5 the deck
+      // closed correctly, and the blue showing between its slabs stayed a bright
+      // summer blue, because 19% of the way to the rain colour is nothing at all
+      // when the starting point is a clear-day zenith. You cannot see blue sky
+      // through rain — the gaps are exactly where the murk should be complete —
+      // so the open sky takes roughly three times the veil the cloud faces do,
+      // and the modelling on the cloud itself is left alone, which is what the
+      // exposure-cut rewrite was for in the first place.
+      float veil = rain * (0.16 + 0.14 * heavy) * mix(1.0, 3.2, open);
+      veil = clamp(veil, 0.0, 0.92);
       vec3 washed = mix(lit, rainSky(v) * mix(1.0, 0.88, heavy), veil);
       // Pivot is the exposed mid rather than 0.5: expanding a dark image about
       // mid-grey would just crush it back toward black.
@@ -280,17 +455,38 @@ export const RainShader = {
 
     void main() {
       vec4 src = texture2D(tDiffuse, vUv);
-      float rain = clamp(uRain, 0.0, 1.0);
+      // The slider is the *mean* intensity now, not the instantaneous one: what
+      // actually falls is the slider modulated by the gust field, so the weather
+      // swells and eases and a front crosses the frame. See gustAt.
+      //
+      // Only the gust reaches the exposure, not the shower cells below. A gust
+      // covers the sky and legitimately takes the light down with it — that is
+      // most of what a squall looks like from indoors — whereas letting a
+      // two-cells-wide noise drive the exposure would put soft dark blotches
+      // across the picture, which is a bruise, not weather.
+      float rain = clamp(uRain, 0.0, 1.0) * gustAt(vUv.x);
+      rain = clamp(rain, 0.0, 1.0);
+      // How hard it is raining in this part of the sky specifically.
+      float cell = showerCell(vUv);
       // Everything about heavy rain — how fat the drops are, how many, how hard
       // the light goes — is driven off this rather than off rain directly, so
       // the bottom of the slider stays a drizzle and the top is a different
       // kind of weather rather than the same one turned up.
-      float heavy = smoothstep(0.3, 1.0, rain);
+      // Retuned from smoothstep(0.3, 1.0). Everything that makes rain look like
+      // rain rather than like a dimmer switch — the drop size, the count, the
+      // near sheet existing at all, the curtains — hangs off this, and starting
+      // it at 0.3 and never reaching 1 meant the middle of the slider produced a
+      // drizzle and only the last few percent produced weather. Measured at
+      // rain=0.5 the old curve gave heavy=0.16, i.e. the near sheet was still
+      // switched off entirely at half a downpour.
+      float heavy = smoothstep(0.12, 0.85, rain);
 
       // The light going out. A downpour is genuinely dark: the deck overhead is
       // thick enough to be its own night, and the rain between you and anything
       // else scatters what little is left.
-      vec3 color = weather(src.rgb, rain, heavy, vUv.y);
+      // How much of this pixel is open sky rather than cloud face — see weather.
+      float open = 1.0 - cloudiness(src.rgb);
+      vec3 color = weather(src.rgb, rain, heavy, vUv.y, open);
 
       // The curtains go in first, behind the streaks: they are the far rain,
       // and the streaks are the near rain in front of them. Strongest low in
@@ -303,10 +499,21 @@ export const RainShader = {
       // than the sky behind it and no more; the old absolute value came out
       // well above the washed frame everywhere and read as smears on the glass
       // rather than as rain in the distance. Weight halved to match.
-      float depth = smoothstep(0.85, 0.15, vUv.y);
-      float veil = smoothstep(0.42, 0.86, curtain(vUv)) * mix(0.25, 1.0, depth);
+      // Distance, from the frame's own depth axis rather than from raw screen
+      // height: a curtain two kilometres out is seen against the sky near the
+      // horizon, and where that horizon is differs by 155 frame rows between the
+      // three scenes.
+      float far = 1.0 - perspAt(vUv.y);
+      // And the shafts hang from cloud bases, not from wherever the noise
+      // happened to be strong. cloudAbove reads the actual sky above this pixel,
+      // so a curtain cannot appear under open blue any more — which also means
+      // the far rain now thickens on its own as the deck closes, without the
+      // rain slider having to say so twice.
+      float base = smoothstep(0.20, 0.75, cloudAbove(vUv));
+      float veil = smoothstep(0.42, 0.86, curtain(vUv))
+        * mix(0.25, 1.0, far) * base * clamp(cell, 0.0, 1.2);
       vec3 curtainColor = rainSky(vUv.y) * 1.5 + 0.04;
-      color = mix(color, curtainColor, veil * heavy * 0.34);
+      color = mix(color, curtainColor, veil * heavy * 0.40);
 
       // Three sheets at three depths. The far one is a fine mist that only
       // reads as texture; the mid one carries the body of the rain; the near
@@ -375,7 +582,7 @@ export const RainShader = {
       // been taken down two stops, so they came out as luminous blue-white
       // shards. A drop can only gather the light that is actually there.
       vec3 gathered = weather(
-        texture2D(tDiffuse, vec2(vUv.x, min(vUv.y + 0.05, 1.0))).rgb, rain, heavy, vUv.y);
+        texture2D(tDiffuse, vec2(vUv.x, min(vUv.y + 0.05, 1.0))).rgb, rain, heavy, vUv.y, open);
 
       // Grey through white, by depth rather than at random.
       //
@@ -393,7 +600,10 @@ export const RainShader = {
       // the blue — so they get a push toward white on top of the gather.
       vec3 nearColor = mix(gathered * 1.30, vec3(1.0), 0.25) + 0.04;
 
-      float strength = mix(0.55, 1.0, heavy) * visible;
+      // The shower cells reach the streaks as well as the curtains: the near
+      // rain is the same rain, so when a cell passes it is heavier here and
+      // lighter there rather than uniformly heavier everywhere.
+      float strength = mix(0.55, 1.0, heavy) * visible * clamp(cell, 0.25, 1.25);
       color = mix(color, farColor, clamp(mist * 0.16 * strength, 0.0, 1.0));
       color = mix(color, midColor, clamp(mid * mix(0.45, 0.78, heavy) * strength, 0.0, 1.0));
       color = mix(color, nearColor, clamp(near * heavy * strength, 0.0, 1.0));

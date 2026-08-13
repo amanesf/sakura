@@ -310,6 +310,24 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       // works in, normalised to luminance 1 so it carries hue alone.
       uOvercast: { value: 0 },
       uOvercastTint: { value: new THREE.Vector3(0.466, 1.067, 1.910) },
+      /**
+       * How far the multiply-scattered floor above is taken down because the
+       * deck is *raining*, 1 when it is dry.
+       *
+       * Overcast and raining are not the same cloud, and until this existed the
+       * renderer treated them as the same cloud seen in less light. The 0.52
+       * above is the base of a closed deck that is merely thick; a deck that is
+       * precipitating is thick enough that the drops have grown large enough to
+       * fall, which means far more optical depth and far more of the light
+       * absorbed before it reaches the base. Measured on the frame at rain=0.5,
+       * the deck's undersides were still coming out as a bright saturated blue
+       * — they read as fair-weather cumulus shadow, which is exactly what they
+       * were being shaded as, and no amount of exposure cutting downstream
+       * distinguishes them, because an exposure cut takes the crown down with
+       * the base and the whole point is that a rain deck's base falls further
+       * than its top does.
+       */
+      uRainDim: { value: 1 },
     },
     vertexShader: /* glsl */ `
       attribute float aHeight;
@@ -400,6 +418,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
       uniform float uDayBlend;
       uniform float uOvercast;
       uniform vec3 uOvercastTint;
+      uniform float uRainDim;
 
       varying vec3 vNormalW;
       varying vec3 vViewDirW;
@@ -619,7 +638,7 @@ export function createCloudMaterials(lightDirection: THREE.Vector3): CloudMateri
         // toward grey was the first attempt and produced exactly the lead sky
         // the reference does not have.
         float overcastLum = dot(color, vec3(0.2126, 0.7152, 0.0722));
-        color = mix(color, overcastLum * uOvercastTint * 0.52, uOvercast);
+        color = mix(color, overcastLum * uOvercastTint * 0.52 * uRainDim, uOvercast);
 
         // Relight for the hour. Applied last, to everything — the white crown
         // and the hazed distance are as much a part of an evening as the ramp
