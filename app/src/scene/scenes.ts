@@ -3,8 +3,8 @@
  * is.
  *
  * Everything in this project is anchored to one 1408x768 frame (core/frame.ts),
- * and until now that frame was also one *picture*. A second illustration does
- * not change the frame — both are 1408x768 and both are keyed by
+ * and at first that frame was also one *picture*. A further illustration does
+ * not change the frame — all of them are 1408x768 and all are keyed by
  * scripts/plate.js — but it does change three things that were constants:
  *
  *  - which plate texture is composited (effects/plateShader.ts),
@@ -17,7 +17,7 @@
  *
  * Scene 1 keeps every number it has always had, exactly. It is the frame every
  * statistic in this project was fitted and measured against (scripts/README.md),
- * and it is the default, so adding a second scene changes no measurement.
+ * and it is the default, so adding scenes beside it changes no measurement.
  */
 export interface SceneDef {
   /** URL value (`?scene=`) and localStorage key. */
@@ -68,6 +68,23 @@ export const SCENES: SceneDef[] = [
     horizonRow: 681,
     hazeTopRow: 558,
     cameraHorizonFraction: 0.835,
+  },
+  {
+    key: '3',
+    label: 'バス停',
+    plate: 'plate3.webp',
+    // Measured the same way off scene3-keyed.png. This frame keys 54.6% of
+    // itself — the widest opening of the three — and 365 of its 1408 columns
+    // are keyed all the way to the frame's bottom edge, because under the
+    // shelter's guardrail the artist's sky runs off the bottom of the picture
+    // rather than meeting anything. So the painted horizon is taken from the
+    // 411 columns that *do* end on sea or hill: their lowest keyed row has a
+    // median of 748 and a spread of 734-766. The haze band keeps scene 1's
+    // 123-row depth, and the rendered horizon keeps the same 0.052 lift above
+    // the painted one: 748/768 = 0.974, less 0.052.
+    horizonRow: 748,
+    hazeTopRow: 625,
+    cameraHorizonFraction: 0.922,
   },
 ];
 

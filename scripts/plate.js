@@ -58,6 +58,21 @@ const SCENES = {
     keyed: repo('1786575481846.png'),
     out: repo('app', 'public', 'plate2.webp'),
   },
+  // Scene 3 arrived keyed-only *and* already re-encoded as lossy WebP, which is
+  // the worst of the three inputs: the encode spreads the flood's chroma into
+  // the paint before this script ever sees it, so the rim repair below is doing
+  // more work here than it does for scene 2. It still lands clean, because the
+  // repair keys on magenta *cast* rather than on distance to one colour, and
+  // the encode's bleed is exactly a cast. Its flood is a third magenta again,
+  // (204, 0, 205), 43 from KEY and comfortably inside the tolerance.
+  3: {
+    art: null,
+    keyed: repo('scene3-keyed.png'),
+    out: repo('app', 'public', 'plate3.webp'),
+    // ...and it needs a different contamination test, `bleed` — see CASTS.
+    cast: 'bleed',
+    castThreshold: 12,
+  },
 };
 
 /** The flooded colour, taken as the modal pixel of scene 1's keyed image (7.2%
@@ -175,6 +190,38 @@ const REPAIR_REACH = 10;
  */
 const MAGENTA_CAST = 4;
 /**
+ * The two ways a pixel can be caught carrying the flood, and which input needs
+ * which.
+ *
+ * `mix` is the one described above: `min(r, b) - g`, the signature of paint
+ * *mixed* with a bright magenta, which is what an antialiased edge in a
+ * losslessly-stored key is made of. It is right for scene 2 and it is what
+ * MAGENTA_CAST is calibrated against.
+ *
+ * `bleed` is for scene 3, whose keyed file reached this repo as a lossy WebP.
+ * A WebP encode does not mix colours, it *subsamples chroma* — so the flood's
+ * two chroma components spread into the neighbouring paint independently, and
+ * measured across the roof soffit the blue one spreads further than the red:
+ * six rows in from the matte the soffit reads (61, 67, 88) against (56, 71, 80)
+ * a few rows deeper, which is plainly violet on screen and yet scores -6 on
+ * `mix`, because r never rose. Any test built on both ends of the spectrum
+ * being up together misses it by construction.
+ *
+ * `r + b - 2g` catches it: it asks only that the middle of the spectrum is down
+ * relative to the ends, which is true of a partial magenta bleed whichever
+ * chroma arrived first. It is a looser question, so it does also fire on
+ * genuinely violet-leaning paint — but a false positive here costs nothing.
+ * The repair replaces a suspect pixel with the mean of its *clean neighbours*,
+ * which for a run of blue sign or red neckerchief is more of the same blue or
+ * red; only the enclosed interior, which is never drawn, is replaced by a flat
+ * colour. The test's job is to be sure it has caught everything, not to be
+ * sparing.
+ */
+const CASTS = {
+  mix: (r, g, b) => Math.min(r, b) - g,
+  bleed: (r, g, b) => r + b - 2 * g,
+};
+/**
  * A cast this strong is the flood wherever it is, so it is repaired without the
  * distance test. It catches what leaked *through* the girl's ponytail: gaps
  * between hair strands are open to the sky but too narrow and too blended with
@@ -187,9 +234,19 @@ const MAGENTA_CAST = 4;
  * thing in it is a navy collar, which sits at about -20.
  */
 const STRONG_CAST = 20;
-const cast = (r, g, b) => Math.min(r, b) - g;
-
-function repairFlood(data, isKey, W, H, C, passes = 4) {
+/**
+ * The same idea for the `bleed` test, which needs its own number because it is
+ * a much looser question: 20 on `r + b - 2g` is the girl's red neckerchief, not
+ * the flood. Undiluted flood scores 409 there and a half-and-half mixture with
+ * dark hair still scores about 210, while the warmest real paint in scene 3 —
+ * that neckerchief — tops out near 120. 150 sits between them.
+ */
+const STRONG_BLEED = 150;
+function repairFlood(data, isKey, W, H, C, opts = {}) {
+  const cast = CASTS[opts.cast || 'mix'];
+  const castThreshold = opts.castThreshold ?? MAGENTA_CAST;
+  const passes = opts.passes ?? 4;
+  const strong = opts.cast === 'bleed' ? STRONG_BLEED : STRONG_CAST;
   // The rim: near the matte, and still carrying the flood's colour.
   const damaged = new Uint8Array(isKey);
   for (let y = 0; y < H; y++) {
@@ -197,8 +254,8 @@ function repairFlood(data, isKey, W, H, C, passes = 4) {
       const p = y * W + x;
       if (isKey[p]) continue;
       const c = cast(data[p * C], data[p * C + 1], data[p * C + 2]);
-      if (c <= MAGENTA_CAST) continue;
-      if (c > STRONG_CAST) { damaged[p] = 1; continue; }
+      if (c <= castThreshold) continue;
+      if (c > strong) { damaged[p] = 1; continue; }
       let near = false;
       for (let dy = -REPAIR_REACH; dy <= REPAIR_REACH && !near; dy++) {
         for (let dx = -REPAIR_REACH; dx <= REPAIR_REACH; dx++) {
@@ -213,6 +270,31 @@ function repairFlood(data, isKey, W, H, C, passes = 4) {
 
   let rim = 0;
   for (let p = 0; p < W * H; p++) if (damaged[p] && !isKey[p]) rim++;
+
+  // What the dilation is allowed to overwrite.
+  //
+  // Everything, when the damage is a *mixture* with the flood: a pixel that is
+  // half magenta has lost its brightness as surely as its hue, and there is
+  // nothing in it worth keeping.
+  //
+  // Only the colour, when the damage is a lossy encode's chroma bleed. A WebP
+  // encode keeps luma per pixel and subsamples chroma, so in scene 3 every
+  // contaminated pixel still carries its original brightness exactly — and in
+  // this artwork brightness *is* the drawing. Dilating full RGB across a band
+  // ten pixels deep around a matte that runs along her jaw, her nose and the
+  // edge of her hair wiped those lines out: the first attempt at scene 3
+  // returned a face with no outline, which is both wrong and specifically
+  // forbidden (plan.md — line art is not to be touched). Replacing Cb/Cr and
+  // keeping Y takes the violet off and leaves every stroke where the artist
+  // put it.
+  const keepLuma = opts.cast === 'bleed';
+  const luma = keepLuma ? new Float32Array(W * H) : null;
+  if (luma) {
+    for (let p = 0; p < W * H; p++) {
+      if (!damaged[p]) continue;
+      luma[p] = 0.299 * data[p * C] + 0.587 * data[p * C + 1] + 0.114 * data[p * C + 2];
+    }
+  }
 
   // Dilate clean colour inward, one ring per pass.
   let frontier = damaged;
@@ -240,6 +322,23 @@ function repairFlood(data, isKey, W, H, C, passes = 4) {
       }
     }
     frontier = next;
+  }
+
+  // Put the original brightness back over the borrowed colour, for the pixels
+  // that only lost their chroma. Done as a scale on the whole triplet rather
+  // than a proper YCbCr round trip: the ratio moves Y to where it was while
+  // holding Cb/Cr's *direction*, which is all this needs, and it cannot
+  // manufacture a hue the dilation did not hand it.
+  if (luma) {
+    for (let p = 0; p < W * H; p++) {
+      if (!damaged[p] || isKey[p]) continue; // under the matte, nothing is drawn
+      const y = 0.299 * data[p * C] + 0.587 * data[p * C + 1] + 0.114 * data[p * C + 2];
+      if (y < 1) continue;
+      const k = luma[p] / y;
+      for (let c = 0; c < 3; c++) {
+        data[p * C + c] = Math.max(0, Math.min(255, Math.round(data[p * C + c] * k)));
+      }
+    }
   }
 
   // Whatever the dilation could not reach — the deep interior of the sky, which
@@ -304,7 +403,12 @@ async function main() {
   // Scene 1 draws its RGB from the untouched artwork, so no magenta can reach
   // the output however the texture is later filtered. Scene 2 has no such file
   // and has to earn the same property.
-  const repair = scene.art ? null : repairFlood(ref.data, isKey, W, H, ref.C);
+  const repair = scene.art
+    ? null
+    : repairFlood(ref.data, isKey, W, H, ref.C, {
+        cast: scene.cast,
+        castThreshold: scene.castThreshold,
+      });
 
   const out = Buffer.alloc(W * H * 4);
   let sky = 0;
