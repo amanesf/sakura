@@ -356,7 +356,21 @@ function applyControls(rainTime: number): void {
     skyDusk = daylight.dusk;
   }
 
-  postFx.setRain(rain, rainTime);
+  // The exposure time the streaks are drawn for.
+  //
+  // Not simply 1/fps, and the difference is deliberate. A single-frame photo at
+  // 1/60 s is the physically exact answer, but the eye is not a 60fps camera: it
+  // integrates over something nearer 1/30 s, which is why rain looks streakier
+  // to a person standing in it than it does in a still frame, and why it has
+  // always been *drawn* streakier than a photograph justifies.
+  //
+  // Held at 1/30 s at either frame rate, so at 30fps a mark is exactly the
+  // distance the drop moves between frames and at 60fps it is twice that. Two
+  // to one is the ratio that still reads as motion — it was fifteen to one
+  // before this, which is a mark that barely moves at all and is why the rain
+  // looked like scratches. Faster than the eye and it stops being visible;
+  // slower and it stops moving.
+  postFx.setRain(rain, rainTime, Math.max(1 / controls.frameRate(), 1 / 30));
 }
 
 // Simulated seconds. Every cluster's position, age and weather is a pure

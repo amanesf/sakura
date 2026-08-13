@@ -71,6 +71,11 @@ export const NearRainShader = {
      * exists to be seen, not there.
      */
     uSkyColor: { value: new THREE.Vector3(0.66, 0.78, 0.86) },
+    /** Buffer size in pixels and the frame's exposure time, for the same reason
+     * effects/rainShader.ts carries them: a motion-blurred streak's length is
+     * how far the drop moved while the shutter was open, not a free number. */
+    uFrameSize: { value: new THREE.Vector2(1408, 768) },
+    uShutter: { value: 1 / 60 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -86,6 +91,8 @@ export const NearRainShader = {
     uniform float uAspect;
     uniform float uNearRain;
     uniform vec3 uSkyColor;
+    uniform vec2 uFrameSize;
+    uniform float uShutter;
     varying vec2 vUv;
 
     float hash12(vec2 p) {
@@ -115,46 +122,62 @@ export const NearRainShader = {
     }
 
     /**
-     * One sheet of very near, very defocused streaks.
+     * One layer of very near, very defocused drops.
      *
-     * Same cell scheme as the sky sheets, with three differences that are all
-     * consequences of the drops being metres away instead of hundreds:
+     * At two to four metres the arithmetic in effects/rainShader.ts gives a
+     * streak of 33-66px crossing the frame in 0.21-0.42s, and the two numbers
+     * are the same fact stated twice: the frame's vertical extent at 3m is only
+     * about 2.8m, so a drop falling at 9m/s is through it in a third of a
+     * second, and 1/60 of that third of a second is the length of the mark.
+     * The first version stated a 0.63s crossing and drew 93-252px streaks,
+     * which is a drop moving at one speed smeared as though it moved at four
+     * times that — the same contradiction the sky rain had, at four times the
+     * size, and the reason the foreground read as a few long scratches.
      *
-     *  - Almost none of them. A handful of cells across the whole frame.
-     *  - Enormously long: streakLen here puts under two rows in a frame
-     *    height, i.e. a streak is most of the picture tall.
-     *  - No sharp edge in any direction. across is a wide gaussian and the
-     *    ends fade over a third of the length each, because a drop this close is
-     *    both motion-blurred and outside the focal plane.
+     * Width is the one place this departs from the sky layers. A drop this
+     * close is far outside the depth of field, so its 1px of true width is
+     * spread by defocus into something genuinely wide and correspondingly
+     * faint. That is a real optical width rather than a fudge, and it is why
+     * near rain in a photograph is a pale smear instead of a line.
      */
-    float nearSheet(vec2 uv, float columns, float speed, float streakLen,
-                    float density, float width, float seed) {
-      vec2 cell = vec2(columns, columns / (streakLen * uAspect));
-      vec2 grid = uv * cell;
-      float column0 = floor(uv.x * columns);
-      // Leans harder than the sky rain: this is the rain that is blowing in
-      // under the roof, which is by definition the part with the wind in it.
-      grid.x += grid.y * (0.16 + hash12(vec2(column0, seed + 3.0)) * 0.14);
-      float column = floor(grid.x);
-      float jitter = hash12(vec2(column, seed));
-      grid.y += uRainTime * speed * (0.75 + jitter * 0.5);
-      float row = floor(grid.y);
-      float id = hash12(vec2(column, row + seed * 37.0));
+    float nearLayer(vec2 uv, float spacingPx, float cellPx, float crossSec,
+                    float widthPx, float density, float seed) {
+      float H = uFrameSize.y;
+      vec2 px = vec2(uv.x * uFrameSize.x, (1.0 - uv.y) * H);
+      // Leans harder than the sky rain: this is the rain blowing in past the
+      // roofline, which is by definition the part with the wind in it.
+      float gx = px.x + px.y * 0.24;
+
+      float col = floor(gx / spacingPx);
+      float colJit = hash12(vec2(col, seed));
+      float fallPxPerSec = H / crossSec;
+      // Wrapped before it is added, for the reason given in
+      // effects/rainShader.ts: this layer is the fastest in the picture, so its
+      // offset is the largest — over ten million pixels after a few hours of
+      // uRainTime, where one float ulp is 2px and consecutive screen rows stop
+      // being distinguishable.
+      float scroll = mod(uRainTime * fallPxPerSec * (0.88 + colJit * 0.24), cellPx * 1024.0);
+      float gy = px.y + scroll;
+
+      float row = floor(gy / cellPx);
+      float id = hash12(vec2(col, row + seed * 37.0));
       if (id > density) return 0.0;
 
       float r1 = fract(id * 17.0);
       float r2 = fract(id * 91.7);
       float r3 = fract(id * 233.1);
-      float w = width * (0.5 + r2 * 0.8);
-      float len = 0.35 + r3 * 0.6;
 
-      vec2 f = fract(grid);
-      float x = abs(f.x - (0.15 + 0.7 * r1));
-      float across = exp(-(x * x) / (w * w + 1e-6));
-      // Fades in and out over a third of its length at each end: a defocused
-      // streak has no head and no tail, only a middle.
-      float along = smoothstep(0.0, len * 0.34, f.y) * smoothstep(len, len * 0.55, f.y);
-      return across * along * (0.35 + r1 * 0.9);
+      float lenPx = max(fallPxPerSec * uShutter * (0.75 + r3 * 0.5), 3.0);
+      float w = widthPx * (0.7 + r2 * 0.7);
+
+      float fx = gx - (col + 0.15 + 0.7 * r1) * spacingPx;
+      float fy = gy - row * cellPx;
+
+      float across = exp(-(fx * fx) / (w * w));
+      // No head and no tail — a defocused streak is all middle.
+      float body = smoothstep(0.0, lenPx * 0.34, fy) * (1.0 - smoothstep(lenPx * 0.66, lenPx, fy));
+      float energy = clamp(48.0 / lenPx, 0.5, 1.6);
+      return across * body * energy * (0.35 + r1 * 0.9);
     }
 
     void main() {
@@ -175,20 +198,17 @@ export const NearRainShader = {
         return;
       }
 
-      // Two sheets, both very sparse. The first is the "near" band — long, fast,
-      // still legible as individual streaks. The second is right on the lens:
-      // three or four smears a frame, so wide and so faint they register as a
-      // shimmer rather than as marks.
-      // Counts, not densities, are what these numbers mean at this scale: nine
-      // columns and under two rows in a frame height is about 25 cells in the
-      // whole picture, so 0.46 of them occupied is a dozen streaks on screen.
-      // The first values (0.32 and 0.18, at 0.34 and 0.16 opacity) put six or
-      // seven of them there at an opacity that lost them against the plate
-      // entirely — measured over the bench, the brightest streak lifted the
-      // painting by four levels, which is below the noise of the illustration's
-      // own texture.
-      float near = nearSheet(vUv, 9.0, 4.6, 1.7, mix(0.0, 0.46, heavy), 0.030, 5.0);
-      float veryNear = nearSheet(vUv, 4.0, 6.4, 1.1, mix(0.0, 0.24, heavy), 0.075, 61.0);
+      // The 3.5m band — 38px marks crossing in a third of a second, still
+      // legible as individual streaks — and a second layer right on the lens at
+      // under a metre, where defocus has spread the drop into a wide dim smear
+      // that registers as a shimmer rather than as a mark.
+      //
+      // Many more of them than the first version, which put six or seven
+      // streaks in the whole frame: at these lengths the marks are a quarter of
+      // what they were, so the same amount of visible rain needs several times
+      // as many.
+      float near = nearLayer(vUv, 90.0, 150.0, 0.36, 1.6, mix(0.0, 0.55, heavy), 5.0);
+      float veryNear = nearLayer(vUv, 220.0, 420.0, 0.16, 7.0, mix(0.0, 0.40, heavy), 61.0);
 
       // A drop is a lens, and at this range it is a lens onto the whole sky
       // rather than onto whatever it is passing in front of — see uSkyColor.

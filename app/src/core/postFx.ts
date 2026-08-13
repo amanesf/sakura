@@ -42,7 +42,7 @@ export interface PostFx {
    * real seconds, pinned to `?t=` when the scene is frozen so captures still
    * reproduce.
    */
-  setRain: (amount: number, rainTime: number) => void;
+  setRain: (amount: number, rainTime: number, shutter: number) => void;
   /** The visible sub-rect of the reference's frame — drives both the plate's UVs
    * and where the horizon haze band sits (core/frame.ts). */
   setFrameRect: (rect: FrameRect) => void;
@@ -164,6 +164,10 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     horizonPass.uniforms.uTexel.value.set(1 / width, 1 / height);
     rainPass.uniforms.uAspect.value = width / height;
     nearRainPass.uniforms.uAspect.value = width / height;
+    // The drops are specified in pixels, so they have to be told what a pixel
+    // is — see effects/rainShader.ts's uFrameSize.
+    (rainPass.uniforms.uFrameSize.value as THREE.Vector2).set(width, height);
+    (nearRainPass.uniforms.uFrameSize.value as THREE.Vector2).set(width, height);
   };
 
   // The haze band's midday colour, kept so the hour can be applied to it
@@ -254,6 +258,9 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     const dim = THREE.MathUtils.lerp(1, Math.pow(exposure, 1 / 2.2), rain);
     const haze = horizonPass.uniforms.uHazeColor.value as THREE.Vector3;
     (nearRainPass.uniforms.uSkyColor.value as THREE.Vector3).copy(haze).multiplyScalar(dim);
+    // The sky rain wants the same quantity, for the same reason: a drop images
+    // the hemisphere, not the patch of murk immediately above it.
+    (rainPass.uniforms.uSkyColor.value as THREE.Vector3).copy(haze).multiplyScalar(dim);
   };
 
   const setDaylight = (day: Daylight) => {
@@ -272,7 +279,12 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     applyHaze();
   };
 
-  const setRain = (amount: number, rainTime: number) => {
+  const setRain = (amount: number, rainTime: number, shutter: number) => {
+    // How long the frame's shutter is open, which is the whole of what sets a
+    // streak's length (effects/rainShader.ts's uShutter). At 30fps the marks
+    // are twice as long, exactly as a camera's would be.
+    rainPass.uniforms.uShutter.value = shutter;
+    nearRainPass.uniforms.uShutter.value = shutter;
     rainPass.enabled = amount > 0.001;
     rainPass.uniforms.uRain.value = amount;
     rainPass.uniforms.uRainTime.value = rainTime;
