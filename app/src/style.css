@@ -349,6 +349,78 @@ body {
   box-shadow: 0 0 0 3px rgba(124, 198, 240, 0.14), 0 0 14px rgba(124, 198, 240, 0.45);
 }
 
+/* --- Settings panel ---------------------------------------------------- */
+
+/* The fold that holds the sliders and the frame rate (ui/controls.ts).
+ *
+ * A <details> with the disclosure triangle taken off and a chevron of our own
+ * put on, because the UA triangle is a black glyph in a console drawn entirely
+ * in thin lit lines. Everything else about the element is left alone — it opens,
+ * closes, takes focus and answers the keyboard without a line of script.
+ */
+.panel {
+  border-top: 1px solid rgba(150, 208, 244, 0.12);
+  margin-top: 3px;
+}
+
+.panel__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  cursor: pointer;
+  list-style: none;
+  /* The row is a control, and a control that selects its own label when
+     double-tapped feels broken. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Both engines' ways of spelling "no disclosure triangle". */
+.panel__summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel__summary::marker {
+  content: '';
+}
+
+.panel__label {
+  /* The same instrument type as a slider's label, so the fold reads as one more
+     row of the console rather than as a header above it. */
+  font: 500 9px/1 system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  color: var(--text-dim);
+}
+
+/* A chevron drawn from two borders: no glyph, no asset, and it inherits the
+   colour of the line family around it. */
+.panel__chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1px solid rgba(150, 208, 244, 0.55);
+  border-bottom: 1px solid rgba(150, 208, 244, 0.55);
+  transform: rotate(45deg) translate(-2px, -2px);
+  transition: transform 160ms ease;
+}
+
+.panel[open] .panel__chevron {
+  transform: rotate(-135deg) translate(-2px, -2px);
+}
+
+.panel__summary:hover .panel__label,
+.panel__summary:focus-visible .panel__label {
+  color: var(--text);
+}
+
+.panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 6px;
+}
+
 /* --- Story ------------------------------------------------------------- */
 
 /* The text at the foot of the page.
@@ -393,7 +465,10 @@ body {
      for, so it takes the title's voice rather than the console's. */
   font-family: 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, 'Noto Serif JP',
     'Source Han Serif', serif;
-  font-size: 12.5px;
+  /* One step up from 12.5. The console folds away now, so the text is no longer
+     competing with six rows of controls for the space under the picture, and it
+     can be set at a size meant for reading rather than at the size that fitted. */
+  font-size: 14px;
   font-weight: 400;
   /* Open leading. Japanese set solid is a wall, and this is meant to be read
      slowly, at the bottom of a dark page, under a sky that keeps moving.
@@ -408,11 +483,91 @@ body {
   text-align: justify;
   /* Proper kinsoku: no 。 or 」 starting a line, no 「 ending one. */
   line-break: strict;
-  color: rgba(217, 233, 245, 0.62);
+  /* White, and fully opaque. This was a dimmed blue-white at 0.62, which put it
+     below the title and the console in the page's hierarchy — appropriate when
+     it was a caption under an instrument, wrong now that it is the thing at the
+     foot of the page you are meant to read. The shadow is what keeps it legible
+     where the canvas paints its lighter passages behind the text. */
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
 }
 
 .story p:last-child {
   margin-bottom: 0;
+}
+
+/* --- Boot and scene change --------------------------------------------- */
+
+/* The curtain over the whole page until the first frame is real.
+ *
+ * Everything on this page arrives at a different time: the module is parsed and
+ * the shaders compiled, the plate downloads, the cloud field is built, and the
+ * shadow map is only correct after the render loop has run a few times. Shown
+ * as they arrive, that is a title on black, then a black band where the picture
+ * goes, then a sky with no illustration in front of it, then finally the
+ * picture — four states, none of which is the thing.
+ *
+ * So the page is covered until it is finished and then revealed once. The
+ * curtain is the same ink the body is painted in, so there is no visible edge
+ * between them and the fade reads as the picture coming up rather than as a
+ * panel sliding off.
+ */
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: var(--ink);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 520ms ease;
+}
+
+.is-booting .boot {
+  opacity: 1;
+  /* While it is up it takes the taps too: the console underneath is live from
+     the moment it is built, and a slider that can be dragged behind a curtain
+     is a slider that moves without the user seeing what it did. */
+  pointer-events: auto;
+}
+
+/* Nothing under the curtain fades in on its own — the curtain lifting is the
+   fade. Held at zero opacity as well as covered so a browser that skips the
+   transition still never paints a half-built page. */
+.is-booting .title,
+.is-booting .stage,
+.is-booting .console,
+.is-booting .story {
+  opacity: 0;
+}
+
+.title,
+.stage,
+.console,
+.story {
+  transition: opacity 520ms ease;
+}
+
+/* Changing scene: the picture blurs out, swaps, and comes back.
+ *
+ * A scene change is a plate download, a camera re-aim and a new horizon, and
+ * they do not land on the same frame. Cut straight between them and what shows
+ * is a frame or two of the new sky behind the old illustration, which reads as
+ * a glitch. Blurring across the swap hides the seam, and — the actual reason to
+ * prefer it over a plain crossfade — it is what a change of place feels like:
+ * the picture goes out of focus, becomes somewhere else, and comes back.
+ *
+ * On the canvas rather than on the page, so the title and the text stay sharp
+ * and legible throughout; only the thing that is changing is disturbed. The
+ * filter runs for about half a second per press, which is affordable where
+ * running it every frame would not be.
+ */
+#app {
+  transition: filter 300ms ease, opacity 300ms ease;
+}
+
+.is-swapping #app {
+  filter: blur(14px) saturate(1.15);
+  opacity: 0.45;
 }
 
 /* --- Measurement mode -------------------------------------------------- */
@@ -433,8 +588,17 @@ body {
  * `?fit=page` captures the real layout. */
 .fit-frame .title,
 .fit-frame .console,
-.fit-frame .story {
+.fit-frame .story,
+.fit-frame .boot {
   display: none;
+}
+
+/* The harness counts rAF ticks and reads the canvas out directly, so a curtain
+   over the page would be invisible to it — but the opacity rules above are not,
+   and a stage held at zero would be. Measurement mode opts out of the whole
+   mechanism. */
+.fit-frame .stage {
+  opacity: 1 !important;
 }
 
 .fit-frame .stage {

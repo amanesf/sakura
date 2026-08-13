@@ -48,6 +48,8 @@ export interface PostFx {
   setFrameRect: (rect: FrameRect) => void;
   /** Which illustration is in front of the sky (scene/scenes.ts). */
   setScene: (scene: SceneDef) => void;
+  /** Resolves when the current scene's plate texture has finished loading. */
+  scenePlateReady: () => Promise<void>;
   render: () => void;
 }
 
@@ -129,10 +131,25 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
   // are two of these at about 100 KB each.
   const loader = new THREE.TextureLoader();
   const plateTextures = new Map<string, THREE.Texture>();
+  /**
+   * When each plate has actually arrived.
+   *
+   * TextureLoader hands back a texture object immediately and fills it in when
+   * the download finishes, which is exactly the behaviour that lets a scene
+   * change show a frame of the new sky behind an empty illustration. Keeping the
+   * promise lets the caller wait for the picture to be real before showing it —
+   * see main.ts's boot gate and scene swap.
+   *
+   * Resolved rather than rejected on error: a plate that will not load is a
+   * broken build, and hanging the curtain up forever over it helps nobody.
+   */
+  const plateLoads = new Map<string, Promise<void>>();
   const plateFor = (scene: SceneDef): THREE.Texture => {
     const cached = plateTextures.get(scene.plate);
     if (cached) return cached;
-    const texture = loader.load(scene.plate);
+    let settle: () => void = () => {};
+    plateLoads.set(scene.plate, new Promise<void>((resolve) => { settle = resolve; }));
+    const texture = loader.load(scene.plate, () => settle(), undefined, () => settle());
     // The buffer at this point is already display-space sRGB (OutputPass ran
     // several passes ago), so the plate must be sampled raw. Tagging it
     // SRGBColorSpace would have the sampler linearise it into a buffer that is
@@ -346,6 +363,14 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     applyFrame();
   };
 
+  /** Resolves once the current scene's illustration has downloaded. */
+  const scenePlateReady = (): Promise<void> => {
+    // applyFrame has already asked for it, so the entry exists unless the plate
+    // came from the cache on an earlier scene.
+    plateFor(plateScene);
+    return plateLoads.get(plateScene.plate) ?? Promise.resolve();
+  };
+
   applyFrame();
 
   return {
@@ -354,6 +379,7 @@ export function createPostFx(renderer: THREE.WebGLRenderer, scene: THREE.Scene, 
     setSize,
     setFrameRect,
     setScene,
+    scenePlateReady,
     setDaylight,
     setRain,
     render: () => composer.render(),

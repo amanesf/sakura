@@ -2,8 +2,20 @@ import { CLOCK_END_HOUR, CLOCK_START_HOUR, formatClock } from '../core/daylight'
 import { DEFAULT_SCENE, SCENES, sceneIndexFor } from '../scene/scenes';
 
 /**
- * The console: four sliders in the order the sky is built up, then the frame
- * rate pair.
+ * The console: the scene buttons, and a panel that folds away holding the four
+ * sliders and the frame rate pair.
+ *
+ * The console had grown to six full-width rows sitting between the picture and
+ * the text, which are the two things on the page worth looking at. Five of those
+ * six are adjustments — you set them once and then watch — and only the scene
+ * buttons are something you reach for while looking. So the adjustments fold
+ * into a <details> and the scene row stays out in the open.
+ *
+ * Closed by default, and the state is remembered: the page you arrive at is the
+ * picture, its title and the text under it, with one row of console between
+ * them. Native <details>/<summary> rather than a hand-rolled toggle, so the
+ * keyboard, the screen reader and find-in-page all behave without any of it
+ * being written here.
  *
  * Built for a phone held upright. The controls are not floated over the picture
  * — in the portrait layout the picture is a band across the upper part of the
@@ -148,6 +160,9 @@ const FRAME_RATE_KEY = 'sakura.fps';
  * The key is still read once, only to delete it, so anyone who used a build
  * between the two behaviours does not keep a remembered scene forever. */
 const SCENE_KEY = 'sakura.scene';
+/** Whether the settings panel was left open. Same reasoning as the frame rate:
+ * someone who opens the sliders is usually going to keep using them. */
+const PANEL_KEY = 'sakura.panel';
 
 /** localStorage, with the failure mode that matters: private mode throws, and
  * the app has no business refusing to start over a remembered preference. */
@@ -209,6 +224,23 @@ export function createControls(
   const values = new Map<string, number>();
   const setters = new Map<string, (value: number) => void>();
 
+  // The fold. Everything but the scene row goes inside it.
+  const panel = document.createElement('details');
+  panel.className = 'panel';
+  panel.open = stored(PANEL_KEY) === 'open';
+  const summary = document.createElement('summary');
+  summary.className = 'panel__summary';
+  // The label is a word and a chevron rather than an icon alone: an icon on its
+  // own in a console of labelled rows reads as decoration, not as a control.
+  summary.innerHTML = '<span class="panel__label">SETTINGS</span>'
+    + '<span class="panel__chevron" aria-hidden="true"></span>';
+  panel.appendChild(summary);
+  panel.addEventListener('toggle', () => remember(PANEL_KEY, panel.open ? 'open' : 'closed'));
+
+  const panelBody = document.createElement('div');
+  panelBody.className = 'panel__body';
+  panel.appendChild(panelBody);
+
   for (const spec of SLIDERS) {
     const row = document.createElement('div');
     row.className = 'slider';
@@ -249,7 +281,7 @@ export function createControls(
       sync();
     });
     row.append(label, input, readout);
-    host.appendChild(row);
+    panelBody.appendChild(row);
     sync();
   }
 
@@ -271,6 +303,10 @@ export function createControls(
     /** localStorage key, when the choice should outlive the visit. */
     storeAs?: string;
     onChange?: (value: T) => void;
+    /** Where the row goes. The frame rate is an adjustment and lives in the
+     * fold; the scene is what you reach for while looking at the picture, so it
+     * stays outside it. */
+    parent: HTMLElement;
   }): { get: () => T; set: (value: T) => void } {
     const row = document.createElement('div');
     row.className = 'slider';
@@ -307,7 +343,7 @@ export function createControls(
 
     set(current);
     row.append(label, group);
-    host.appendChild(row);
+    options.parent.appendChild(row);
     return { get: () => current, set };
   }
 
@@ -322,6 +358,7 @@ export function createControls(
     text: String,
     initial: pick(FRAME_RATES, initial.fps, storedFps, DEFAULT_FRAME_RATE),
     storeAs: FRAME_RATE_KEY,
+    parent: panelBody,
   });
 
   forget(SCENE_KEY);
@@ -333,7 +370,12 @@ export function createControls(
     text: (key) => SCENES[sceneIndexFor(key)].label,
     initial: pick(sceneKeys, initialScene, null, SCENES[DEFAULT_SCENE].key),
     onChange: (key) => onSceneChange?.(sceneIndexFor(key)),
+    parent: host as HTMLElement,
   });
+
+  // The fold goes in last, so the scene row sits above it: the thing you use is
+  // nearer the picture and the thing you put away is nearer the text.
+  host.appendChild(panel);
 
   const read = (key: string) => values.get(key) ?? 0;
   return {

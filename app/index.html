@@ -11,6 +11,16 @@
   </head>
   <body>
 
+    <!-- Nothing is shown until the first real frame exists.
+         The class is set here rather than from the module script so it applies
+         before the first paint: main.ts is a module and therefore deferred, so
+         by the time it could add a class the browser has already shown the page
+         once, which is the flash this exists to prevent. main.ts takes it off
+         again when the plate has loaded and the scene has actually been drawn
+         (see the boot gate there). -->
+    <script>document.documentElement.classList.add('is-booting');</script>
+    <div class="boot" aria-hidden="true"></div>
+
     <!-- The canvas covers the whole page and sits behind everything, so the
          picture and the silhouette under it are drawn in one frame by the GPU
          with nothing read back (core/compose.ts). `.stage` below is now only a

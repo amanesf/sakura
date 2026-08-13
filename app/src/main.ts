@@ -219,6 +219,11 @@ if (cloudLayer) compose.setClouds(cloudLayer.texture);
 // The console owns the current value; this is called once during
 // createControls with whatever `?scene=` or the remembered choice resolved to,
 // and again on every press.
+/** False until the boot curtain has been taken down; see the gate at the foot of
+ * this file. Until then a scene press cannot happen, and the initial
+ * applyScene must not dissolve. */
+let booted = false;
+
 function applyScene(index: number): void {
   const scene = SCENES[index];
   postFx.setScene(scene);
@@ -228,7 +233,68 @@ function applyScene(index: number): void {
   applyToCamera(camera, currentRect);
 }
 
-const controls = createControls(initial, query.get('scene'), applyScene);
+/**
+ * How many rendered frames it takes before the picture is the picture.
+ *
+ * The cloud shadow map is filled during the render loop, so frame 0 is shaded
+ * against an empty depth map and comes out flat — this is the same reason
+ * scripts/capture.js waits before reading the canvas. Three is enough once the
+ * materials exist; the harness waits eight only because it is also waiting for
+ * a cold page.
+ */
+const SETTLE_FRAMES = 3;
+
+/** Resolves after `count` frames of the render loop have actually been drawn. */
+function drawnFrames(count: number): Promise<void> {
+  return new Promise((resolve) => {
+    let seen = 0;
+    const tick = () => {
+      if (++seen >= count) resolve();
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/**
+ * The scene swap, as something you watch rather than something that happens to
+ * you.
+ *
+ * A press changes three things that do not land together — the plate has to
+ * download, the camera re-aims, and the horizon the haze and the rain hang from
+ * moves — so the honest cut shows a frame or two of the new sky behind the old
+ * illustration. Rather than trying to land them on one frame, the picture is
+ * blurred across the join: it goes out of focus, becomes somewhere else, and
+ * comes back (the CSS is in style.css under "Boot and scene change").
+ *
+ * The floor is what makes it read as a transition rather than as a stutter. A
+ * plate that is already cached resolves in microseconds, so without a minimum
+ * the second press of a button would swap instantly and the first would not,
+ * and the same control would feel like two different controls.
+ */
+const SWAP_BLUR_MS = 260;
+
+async function swapScene(index: number): Promise<void> {
+  const root = document.documentElement;
+  root.classList.add('is-swapping');
+  // Let the blur actually get on screen before the picture underneath changes.
+  await drawnFrames(2);
+  applyScene(index);
+  await Promise.all([
+    postFx.scenePlateReady(),
+    new Promise((resolve) => setTimeout(resolve, SWAP_BLUR_MS)),
+  ]);
+  await drawnFrames(SETTLE_FRAMES);
+  root.classList.remove('is-swapping');
+}
+
+const controls = createControls(initial, query.get('scene'), (index) => {
+  // The first call comes from inside createControls, with whatever `?scene=` or
+  // the default resolved to. That one is not a swap — there is nothing to
+  // dissolve from and the boot curtain is still up — so it is applied plainly.
+  if (booted) void swapScene(index);
+  else applyScene(index);
+});
 
 // Everything the console drives, applied once per frame rather than on change
 // events: three of the four sliders feed values that also have to be re-derived
@@ -505,3 +571,36 @@ function renderLoop(now: number) {
 // otherwise sit a whole page-lifetime behind performance.now() and make the cap
 // pass trivially on the first frame.
 renderLoop(performance.now());
+
+/**
+ * The boot gate: nothing is shown until there is something worth showing.
+ *
+ * index.html puts the curtain up before the first paint (it has to be done
+ * there — this module is deferred, so anything it does happens after the
+ * browser has already painted once). This takes it down, and only once all
+ * three of the things that arrive separately have arrived:
+ *
+ *  - the illustration has downloaded,
+ *  - the render loop has drawn enough frames for the cloud shadow map to be
+ *    filled, so the sky is modelled rather than flat,
+ *  - and any web fonts have settled, so the title does not reflow into place
+ *    a moment after the picture appears.
+ *
+ * Never in measurement mode: scripts/capture.js reads the canvas directly and
+ * the stylesheet opts that mode out of the curtain entirely, but there is no
+ * reason to make the harness wait on a font either.
+ */
+if (fitFrame) {
+  booted = true;
+} else {
+  const fontsReady = (document as Document & { fonts?: { ready: Promise<unknown> } })
+    .fonts?.ready ?? Promise.resolve();
+  void Promise.all([
+    postFx.scenePlateReady(),
+    drawnFrames(SETTLE_FRAMES),
+    fontsReady,
+  ]).then(() => {
+    booted = true;
+    document.documentElement.classList.remove('is-booting');
+  });
+}
