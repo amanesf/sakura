@@ -246,7 +246,9 @@ const STRONG_CAST = 20;
  * The default rule set: one test, the flood-mixture one, at the reach and
  * thresholds scene 2 was tuned with. Scene 3 overrides it (see MIX_AND_BLEED).
  */
-const MIX_ONLY = [{ cast: 'mix', threshold: MAGENTA_CAST, reach: REPAIR_REACH, strong: STRONG_CAST }];
+const MIX_ONLY = [
+  { cast: 'mix', threshold: MAGENTA_CAST, reach: REPAIR_REACH, strong: STRONG_CAST, keepLuma: false },
+];
 
 /**
  * Scene 3's rule set: two tests, because it has two different damages and one
@@ -268,8 +270,8 @@ const MIX_ONLY = [{ cast: 'mix', threshold: MAGENTA_CAST, reach: REPAIR_REACH, s
  * mixture rule already has it at `strong: 20`.
  */
 const MIX_AND_BLEED = [
-  ...MIX_ONLY,
-  { cast: 'bleed', threshold: 14, reach: 8, strong: Infinity },
+  { ...MIX_ONLY[0], keepLuma: true },
+  { cast: 'bleed', threshold: 14, reach: 8, strong: Infinity, keepLuma: true },
 ];
 
 function repairFlood(data, isKey, W, H, C, opts = {}) {
@@ -296,9 +298,20 @@ function repairFlood(data, isKey, W, H, C, opts = {}) {
           }
         }
         if (!hit) continue;
-        // A pixel both rules claim is a mixture: the stricter rule wins, and
-        // its brightness is not worth keeping.
-        chromaOnly[p] = damaged[p] ? chromaOnly[p] && rule.cast === 'bleed' : rule.cast === 'bleed';
+        // How much of the pixel may be overwritten. A *heavily* mixed pixel —
+        // the ones the `strong` tier catches without a distance test — has lost
+        // its brightness along with its hue and is replaced outright. Everything
+        // else keeps its own brightness and is only recoloured: at a
+        // one-pixel antialiased rim scoring 4-20 the flood is a small fraction
+        // of the pixel, so its luma is very nearly the paint's own, and
+        // averaging it away is what softened the drawing. Measured on the
+        // girl's face, replacing luma too costs 11% of the box's mean gradient
+        // (27.3 in the source, 26.8 after the WebP encode alone, 24.3 with the
+        // repair); keeping it holds the encode's number.
+        // `keepLuma` is off for scene 2, whose plate predates this and is left
+        // byte-for-byte as it was.
+        const heavy = !rule.keepLuma || c > rule.strong;
+        chromaOnly[p] = damaged[p] ? chromaOnly[p] && !heavy : !heavy;
         damaged[p] = 1;
       }
     }
