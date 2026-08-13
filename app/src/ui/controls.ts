@@ -133,10 +133,20 @@ const SLIDERS: SliderSpec[] = [
  */
 const FRAME_RATES = [30, 60] as const;
 const DEFAULT_FRAME_RATE = 60;
-/** Where the choices are remembered. A preference someone sets because their
- * phone struggles — or because they prefer the other picture — is not one they
- * should have to set again every visit. */
+/** Where the frame rate is remembered. A preference someone sets because their
+ * phone struggles is not one they should have to set again every visit. */
 const FRAME_RATE_KEY = 'sakura.fps';
+/**
+ * The scene used to be remembered here too, and is not any more: the app opens
+ * on scene 1 every time unless `?scene=` says otherwise.
+ *
+ * Which picture you are looking at is not a preference like the frame rate —
+ * it is where the app starts, and the front door should be the same door every
+ * time. Remembering it meant that whichever scene you happened to leave the app
+ * on became your new default, silently and for good.
+ *
+ * The key is still read once, only to delete it, so anyone who used a build
+ * between the two behaviours does not keep a remembered scene forever. */
 const SCENE_KEY = 'sakura.scene';
 
 /** localStorage, with the failure mode that matters: private mode throws, and
@@ -146,6 +156,14 @@ function stored(key: string): string | null {
     return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+
+function forget(key: string): void {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // See stored().
   }
 }
 
@@ -306,14 +324,14 @@ export function createControls(
     storeAs: FRAME_RATE_KEY,
   });
 
+  forget(SCENE_KEY);
   const sceneKeys = SCENES.map((s) => s.key);
   const scene = addSegment({
     label: 'SCENE',
     ariaLabel: '場面',
     values: sceneKeys,
     text: (key) => SCENES[sceneIndexFor(key)].label,
-    initial: pick(sceneKeys, initialScene, stored(SCENE_KEY), SCENES[DEFAULT_SCENE].key),
-    storeAs: SCENE_KEY,
+    initial: pick(sceneKeys, initialScene, null, SCENES[DEFAULT_SCENE].key),
     onChange: (key) => onSceneChange?.(sceneIndexFor(key)),
   });
 
