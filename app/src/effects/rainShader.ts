@@ -540,9 +540,18 @@ export const RainShader = {
       // the time. The halo is a very wide, very faint second gaussian: the bloom
       // pass sits eight passes upstream and can never see the rain, so a glint
       // that should bleed has to bring its own bleed with it.
-      float flash = pow(0.5 + 0.5 * sin(6.2831853 * (uRainTime * (0.55 + r2 * 1.3) + id * 11.0)), 18.0);
-      float halo = exp(-(fx * fx) / (w * w * 30.0));
-      float sparkle = (across * 0.72 + halo * 0.28) * body * (0.35 + 0.65 * head) * flash;
+      float flash = pow(0.5 + 0.5 * sin(6.2831853 * (uRainTime * (0.55 + r2 * 1.3) + id * 11.0)), 14.0);
+      float halo = exp(-(fx * fx) / (w * w * 45.0));
+      // A few drops flash far harder than the rest.
+      //
+      // Whether a drop's caustic reaches the eye is a matter of its axis
+      // happening to line up, so the distribution is not "every drop glints a
+      // little" — it is "almost none of them, and the ones that do are briefly
+      // the brightest thing in the frame". A fourth power puts about one drop in
+      // twenty at more than half strength and one in a few hundred at full,
+      // which is what makes the rain *twinkle* rather than shimmer uniformly.
+      float rare = 0.30 + 6.0 * pow(r1, 4.0);
+      float sparkle = (across * 0.72 + halo * 0.28) * body * (0.35 + 0.65 * head) * flash * rare;
 
       return vec2(ink, sparkle);
     }
@@ -667,7 +676,10 @@ export const RainShader = {
       float base = smoothstep(0.20, 0.75, cloudAbove(vUv));
       float veil = smoothstep(0.42, 0.86, curtain(vUv))
         * mix(0.25, 1.0, far) * base * clamp(cell, 0.0, 1.2);
-      vec3 curtainColor = rainSky(vUv.y) * 1.5 + 0.04;
+      // Lifted toward white for the same reason the drops are: a curtain is a
+      // great many drops scattering light back at you, so it is the palest thing
+      // in a rain sky, not merely a brighter version of the sky's own colour.
+      vec3 curtainColor = mix(rainSky(vUv.y) * 1.5, vec3(1.0), 0.22) + 0.03;
       color = mix(color, curtainColor, veil * heavy * 0.40);
 
       // Three layers, named by the distance they are at rather than by how
@@ -701,9 +713,17 @@ export const RainShader = {
       // in to 8m — a 31px mark instead of a 20px one — and its count went up
       // rather than down. A short mark leaning with the wind is the smallest
       // thing that still says which way the weather is going.
-      vec2 farD = dropLayer(vUv, 7.0, 22.0, 4.1, 1.10, mix(0.04, 0.09, heavy), 1.0);
-      vec2 midD = dropLayer(vUv, 14.0, 50.0, 0.83, 1.35, mix(0.12, 0.38, heavy), 7.0);
-      vec2 nearD = dropLayer(vUv, 70.0, 210.0, 0.31, 1.30, mix(0.0, 0.34, heavy), 23.0);
+      // Thinner and far more numerous than the first pass at this. Widths are
+      // down to 0.85-1.05px, which is about as thin as anything can be drawn and
+      // still be drawn — and much closer to the truth than the 1.1-1.35 they
+      // replace, since the drops these stand for are between 0.04 and 0.5 of a
+      // pixel wide. The spacing came down with them, roughly halved in every
+      // layer, because thinning a mark without adding marks only removes rain.
+      // The count is free: a layer is one hash test per pixel whatever its
+      // density (see the note above on what actually limits it).
+      vec2 farD = dropLayer(vUv, 5.0, 16.0, 4.1, 0.85, mix(0.06, 0.13, heavy), 1.0);
+      vec2 midD = dropLayer(vUv, 9.0, 34.0, 0.83, 0.95, mix(0.14, 0.42, heavy), 7.0);
+      vec2 nearD = dropLayer(vUv, 46.0, 150.0, 0.31, 1.05, mix(0.0, 0.38, heavy), 23.0);
 
       // The bottom of the slider is a drizzle you can barely see: the marks
       // fade in over the first third of it rather than appearing at full
@@ -758,9 +778,22 @@ export const RainShader = {
       // The physical statement wanted here is that a distant drop is seen
       // through more of the same rain that is dimming everything else, and what
       // that rain's colour *is* is the murk, so that is what to converge on.
-      vec3 farColor = mix(lit, uSkyColor * 1.10, 0.45);
-      vec3 midColor = lit * 1.20;
-      vec3 nearColor = mix(lit * 1.30, vec3(1.0), 0.22) + 0.04;
+      // ...and then taken toward white, by depth.
+      //
+      // Physically a drop carries the sky's colour, which is what the terms
+      // above compute, and a strictly correct rain against this sky would be a
+      // slightly paler blue. It reads as too little. What a drop actually does
+      // is *concentrate* the hemisphere into a line, and a concentration of
+      // light desaturates as it climbs toward the top of the range — the same
+      // reason a specular highlight goes white while the surface under it keeps
+      // its hue. So the marks are lifted toward white, and by more the nearer
+      // they are, since a near drop is delivering the most light.
+      //
+      // This is also how rain has always been painted, and the picture it is
+      // being drawn into is a painting.
+      vec3 farColor = mix(mix(lit, uSkyColor * 1.10, 0.45), vec3(1.0), 0.30);
+      vec3 midColor = mix(lit * 1.20, vec3(1.0), 0.45);
+      vec3 nearColor = mix(lit * 1.30, vec3(1.0), 0.55) + 0.04;
 
       // The shower cells reach the marks as well as the curtains: the near rain
       // is the same rain, so when a cell passes it is heavier here and lighter
@@ -770,9 +803,9 @@ export const RainShader = {
       // small fraction of the light of one at 3.5m, so the far field is a faint
       // grain, the middle layer carries the read, and the near streaks are the
       // brightest marks in the frame and the rarest.
-      color = mix(color, farColor, clamp(farD.x * 0.26 * strength, 0.0, 1.0));
-      color = mix(color, midColor, clamp(midD.x * mix(0.85, 1.45, heavy) * strength, 0.0, 1.0));
-      color = mix(color, nearColor, clamp(nearD.x * 1.35 * heavy * strength, 0.0, 1.0));
+      color = mix(color, farColor, clamp(farD.x * 0.40 * strength, 0.0, 1.0));
+      color = mix(color, midColor, clamp(midD.x * mix(1.30, 2.10, heavy) * strength, 0.0, 1.0));
+      color = mix(color, nearColor, clamp(nearD.x * 1.90 * heavy * strength, 0.0, 1.0));
 
       // The glints go on top, and they are *added* rather than mixed.
       //
@@ -793,8 +826,18 @@ export const RainShader = {
       // tinted — so this one may lift toward neutral. It is a handful of pixels
       // for a couple of frames, which is the one place a neutral highlight does
       // not turn the field warm.
-      vec3 glint = lit * 1.15 + 0.10;
-      float sparkle = farD.y * 0.16 + midD.y * 0.30 + nearD.y * 0.20;
+      // Near white, and brighter than it was by a factor of three.
+      //
+      // A caustic is the sky's light concentrated rather than tinted, so it may
+      // go neutral where the drop's body may not; and it is the one part of the
+      // rain that is *supposed* to outshine its surroundings for a moment. The
+      // first version weighted it at a sixth of this and put the weight on the
+      // far layer, which is backwards — a point has no head to glint from and
+      // there are thousands of them, so all that produced was a faint overall
+      // shimmer. The weight belongs on the mid and near layers, where a mark has
+      // a head, and it belongs high enough to actually flash.
+      vec3 glint = mix(lit * 1.15 + 0.10, vec3(1.0), 0.45);
+      float sparkle = farD.y * 0.55 + midD.y * 0.85 + nearD.y * 0.60;
       color += glint * sparkle * strength * mix(0.35, 1.0, heavy);
 
       gl_FragColor = vec4(color, src.a);

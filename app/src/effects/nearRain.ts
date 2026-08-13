@@ -207,7 +207,7 @@ export const NearRainShader = {
       // streaks in the whole frame: at these lengths the marks are a quarter of
       // what they were, so the same amount of visible rain needs several times
       // as many.
-      float near = nearLayer(vUv, 90.0, 150.0, 0.36, 1.6, mix(0.0, 0.55, heavy), 5.0);
+      float near = nearLayer(vUv, 60.0, 110.0, 0.36, 1.3, mix(0.0, 0.60, heavy), 5.0);
       float veryNear = nearLayer(vUv, 220.0, 420.0, 0.16, 7.0, mix(0.0, 0.40, heavy), 61.0);
 
       // A drop is a lens, and at this range it is a lens onto the whole sky
@@ -215,7 +215,9 @@ export const NearRainShader = {
       // Mostly ambient, with a little of the local picture left in it so that a
       // streak crossing a bright patch still picks some of it up.
       vec3 gathered = texture2D(tDiffuse, vec2(vUv.x, min(vUv.y + 0.09, 1.0))).rgb;
-      vec3 dropColor = mix(gathered * 1.10, uSkyColor, 0.68) + 0.02;
+      // Lifted toward white like the sky rain's marks — a near drop concentrates
+      // the whole hemisphere and is the brightest thing crossing the frame.
+      vec3 dropColor = mix(mix(gathered * 1.10, uSkyColor, 0.68), vec3(1.0), 0.42) + 0.02;
 
       vec3 color = src;
       color = mix(color, dropColor, clamp(near * 0.52 * heavy, 0.0, 1.0));
