@@ -69,9 +69,9 @@ const SCENES = {
     art: null,
     keyed: repo('scene3-keyed.png'),
     out: repo('app', 'public', 'plate3.webp'),
-    // ...and it needs a different contamination test, `bleed` — see CASTS.
-    cast: 'bleed',
-    castThreshold: 12,
+    // ...and it needs a second contamination test beside the usual one, at its
+    // own much shorter reach. See MIX_AND_BLEED.
+    rules: 'mix+bleed',
   },
 };
 
@@ -207,19 +207,27 @@ const MAGENTA_CAST = 4;
  * `mix`, because r never rose. Any test built on both ends of the spectrum
  * being up together misses it by construction.
  *
- * `r + b - 2g` catches it: it asks only that the middle of the spectrum is down
- * relative to the ends, which is true of a partial magenta bleed whichever
- * chroma arrived first. It is a looser question, so it does also fire on
- * genuinely violet-leaning paint — but a false positive here costs nothing.
- * The repair replaces a suspect pixel with the mean of its *clean neighbours*,
- * which for a run of blue sign or red neckerchief is more of the same blue or
- * red; only the enclosed interior, which is never drawn, is replaced by a flat
- * colour. The test's job is to be sure it has caught everything, not to be
- * sparing.
+ * So `bleed` measures the component that actually arrived: `b - g`. Two other
+ * formulations were tried on this frame and both are recorded here because
+ * each fails in a way that is easy to mistake for success:
+ *
+ *  - `min(r, b) - g`, the `mix` test, scores the contaminated soffit at -6 and
+ *    leaves a violet thread along every roof edge and pillar.
+ *  - `r + b - 2g` does see it (21 against -6 for clean soffit a few rows
+ *    deeper) — but it also scores *skin* at about +20, because skin is warm and
+ *    that test cannot tell which end of the spectrum is up. Used at any useful
+ *    reach it repaints her face, which is what the first scene-3 plate did.
+ *
+ * `b - g` separates them cleanly: the contaminated soffit is +21 to +24, clean
+ * soffit +9, and her skin **-20**. It does still fire on genuinely blue paint —
+ * the bus-stop sign, the sea — and that costs nothing: the repair replaces a
+ * suspect pixel with the mean of its *clean neighbours*, which along a run of
+ * blue sign is more blue sign, and it keeps the pixel's own brightness (see
+ * `chromaOnly` below), so the lettering stays where it is.
  */
 const CASTS = {
   mix: (r, g, b) => Math.min(r, b) - g,
-  bleed: (r, g, b) => r + b - 2 * g,
+  bleed: (r, g, b) => b - g,
 };
 /**
  * A cast this strong is the flood wherever it is, so it is repaired without the
@@ -235,36 +243,64 @@ const CASTS = {
  */
 const STRONG_CAST = 20;
 /**
- * The same idea for the `bleed` test, which needs its own number because it is
- * a much looser question: 20 on `r + b - 2g` is the girl's red neckerchief, not
- * the flood. Undiluted flood scores 409 there and a half-and-half mixture with
- * dark hair still scores about 210, while the warmest real paint in scene 3 —
- * that neckerchief — tops out near 120. 150 sits between them.
+ * The default rule set: one test, the flood-mixture one, at the reach and
+ * thresholds scene 2 was tuned with. Scene 3 overrides it (see MIX_AND_BLEED).
  */
-const STRONG_BLEED = 150;
+const MIX_ONLY = [{ cast: 'mix', threshold: MAGENTA_CAST, reach: REPAIR_REACH, strong: STRONG_CAST }];
+
+/**
+ * Scene 3's rule set: two tests, because it has two different damages and one
+ * rule cannot have both radii.
+ *
+ * The *mixture* rule is scene 2's, unchanged, and it is what reaches deep. It
+ * has to: the sky comes through her ponytail in wedges several pixels into the
+ * hair, and those wedges are genuinely part magenta. `min(r, b) - g` can be
+ * trusted that far in because nothing painted here scores positive on it —
+ * her skin, the warmest broad thing in the frame, sits at about -20.
+ *
+ * The *bleed* rule is the encode's chroma spread. It stays close to the matte —
+ * 8, against the measured depth of the bleed, which reads +21 four rows in from
+ * the matte and is back to the clean +9 by ten — because it is a looser test
+ * than the mixture one and there is no reason to let it wander.
+ *
+ * There is no unconditional tier on it — `strong: Infinity` — because anything
+ * strong enough to be worth chasing across open paint is a mixture, and the
+ * mixture rule already has it at `strong: 20`.
+ */
+const MIX_AND_BLEED = [
+  ...MIX_ONLY,
+  { cast: 'bleed', threshold: 14, reach: 8, strong: Infinity },
+];
+
 function repairFlood(data, isKey, W, H, C, opts = {}) {
-  const cast = CASTS[opts.cast || 'mix'];
-  const castThreshold = opts.castThreshold ?? MAGENTA_CAST;
+  const rules = opts.rules || MIX_ONLY;
   const passes = opts.passes ?? 4;
-  const strong = opts.cast === 'bleed' ? STRONG_BLEED : STRONG_CAST;
-  // The rim: near the matte, and still carrying the flood's colour.
+  // The rim: near the matte, and still carrying the flood's colour. `damaged`
+  // marks the pixel; `chromaOnly` records that the *only* rule that caught it
+  // was a bleed rule, which decides how much of it may be overwritten below.
   const damaged = new Uint8Array(isKey);
+  const chromaOnly = new Uint8Array(W * H);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const p = y * W + x;
       if (isKey[p]) continue;
-      const c = cast(data[p * C], data[p * C + 1], data[p * C + 2]);
-      if (c <= castThreshold) continue;
-      if (c > strong) { damaged[p] = 1; continue; }
-      let near = false;
-      for (let dy = -REPAIR_REACH; dy <= REPAIR_REACH && !near; dy++) {
-        for (let dx = -REPAIR_REACH; dx <= REPAIR_REACH; dx++) {
-          const xx = x + dx, yy = y + dy;
-          if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
-          if (isKey[yy * W + xx]) { near = true; break; }
+      for (const rule of rules) {
+        const c = CASTS[rule.cast](data[p * C], data[p * C + 1], data[p * C + 2]);
+        if (c <= rule.threshold) continue;
+        let hit = c > rule.strong;
+        for (let dy = -rule.reach; dy <= rule.reach && !hit; dy++) {
+          for (let dx = -rule.reach; dx <= rule.reach; dx++) {
+            const xx = x + dx, yy = y + dy;
+            if (xx < 0 || yy < 0 || xx >= W || yy >= H) continue;
+            if (isKey[yy * W + xx]) { hit = true; break; }
+          }
         }
+        if (!hit) continue;
+        // A pixel both rules claim is a mixture: the stricter rule wins, and
+        // its brightness is not worth keeping.
+        chromaOnly[p] = damaged[p] ? chromaOnly[p] && rule.cast === 'bleed' : rule.cast === 'bleed';
+        damaged[p] = 1;
       }
-      if (near) damaged[p] = 1;
     }
   }
 
@@ -287,13 +323,10 @@ function repairFlood(data, isKey, W, H, C, opts = {}) {
   // forbidden (plan.md — line art is not to be touched). Replacing Cb/Cr and
   // keeping Y takes the violet off and leaves every stroke where the artist
   // put it.
-  const keepLuma = opts.cast === 'bleed';
-  const luma = keepLuma ? new Float32Array(W * H) : null;
-  if (luma) {
-    for (let p = 0; p < W * H; p++) {
-      if (!damaged[p]) continue;
-      luma[p] = 0.299 * data[p * C] + 0.587 * data[p * C + 1] + 0.114 * data[p * C + 2];
-    }
+  const luma = new Float32Array(W * H);
+  for (let p = 0; p < W * H; p++) {
+    if (!chromaOnly[p] || isKey[p]) continue;
+    luma[p] = 0.299 * data[p * C] + 0.587 * data[p * C + 1] + 0.114 * data[p * C + 2];
   }
 
   // Dilate clean colour inward, one ring per pass.
@@ -329,9 +362,9 @@ function repairFlood(data, isKey, W, H, C, opts = {}) {
   // than a proper YCbCr round trip: the ratio moves Y to where it was while
   // holding Cb/Cr's *direction*, which is all this needs, and it cannot
   // manufacture a hue the dilation did not hand it.
-  if (luma) {
+  {
     for (let p = 0; p < W * H; p++) {
-      if (!damaged[p] || isKey[p]) continue; // under the matte, nothing is drawn
+      if (!chromaOnly[p] || isKey[p]) continue; // under the matte, nothing is drawn
       const y = 0.299 * data[p * C] + 0.587 * data[p * C + 1] + 0.114 * data[p * C + 2];
       if (y < 1) continue;
       const k = luma[p] / y;
@@ -406,8 +439,7 @@ async function main() {
   const repair = scene.art
     ? null
     : repairFlood(ref.data, isKey, W, H, ref.C, {
-        cast: scene.cast,
-        castThreshold: scene.castThreshold,
+        rules: scene.rules === 'mix+bleed' ? MIX_AND_BLEED : MIX_ONLY,
       });
 
   const out = Buffer.alloc(W * H * 4);
